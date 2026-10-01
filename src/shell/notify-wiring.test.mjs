@@ -329,7 +329,14 @@ test('exit: the open sent episodes are cleared, and the wait is bounded at 2 s',
   assert.deepEqual(s.cleared.map((c) => c.seq), ['pir-w1-1'], 'only what the phone was sent');
   assert.equal(NOTIFY_EXIT_WAIT_MS, 2000);
   const t0 = Date.now();
-  await withinMs(new Promise(() => {}), 30);
+  // withinMs unrefs its cap so it never holds the exit itself; with nothing else pending, the test runner's
+  // event loop would drain mid-await and cancel this file. A ref'd timer keeps the loop alive meanwhile.
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    await withinMs(new Promise(() => {}), 30);
+  } finally {
+    clearTimeout(keepAlive);
+  }
   assert.ok(Date.now() - t0 < 1000, 'a send that never settles does not hold the exit');
   assert.equal(await withinMs(Promise.reject(new Error('x')), 30), undefined, 'a rejection does not escape');
 });
@@ -389,7 +396,7 @@ test('workerEnv: null with no config or a corrupt one; the presence variable wit
 test('main: build workers and the agent are started with the same workerEnv', () => {
   const src = readFileSync(fileURLToPath(new URL('./coordinate.mjs', import.meta.url)), 'utf8');
   const main = src.slice(src.indexOf('async function main(argv)'));
-  assert.match(main, /createPlatform\(\{[^\n]*workerEnv: \(\) => workerEnv\(\) \}\)/);
+  assert.match(main, /createPlatform\(\{[^\n]*workerEnv: \(\) => workerEnv\(\)(, [^\n]*)? \}\)/);
   assert.match(main, /startCoordinatorAgent\(\{[\s\S]*?env: \(\) => workerEnv\(\),\n\s*\}\)/);
 });
 
