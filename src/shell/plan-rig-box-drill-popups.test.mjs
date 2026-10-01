@@ -33,7 +33,10 @@ for (const [cols, rows] of SIZES) {
       assert.equal(lastLine(bare), cols >= 120 ? `${footer} · type @repo to plan or build` : footer);
       for (const c of cases) {
         await typeSettled(screen, ...c.keys);
-        const shot = await screen.waitFor();
+        // The head line is waited for, not read off the first quiet frame: on a loaded machine that can still be
+        // the frame from before the last key.
+        const shows = (h) => (typeof c.head === 'string' ? h === c.head : c.head.test(h));
+        const shot = await screen.waitFor((s) => shows((headOf(s.split('\n')) ?? '').slice('new  '.length)));
         const head = headOf(shot).slice('new  '.length);
         if (typeof c.head === 'string') assert.equal(head, c.head, c.keys.join(''));
         else assert.match(head, c.head);

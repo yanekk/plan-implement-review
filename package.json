@@ -14,6 +14,6 @@
     "zod": "4.6.5"
   },
   "scripts": {
-    "test": "FORCE_COLOR=0 NO_COLOR=1 node --test --test-reporter=dot 'src/**/*.test.mjs' && echo TESTS PASSED || { echo TESTS FAILED; exit 1; }"
+    "test": "FORCE_COLOR=0 NO_COLOR=1 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0 node --test --test-reporter=dot 'src/**/*.test.mjs' && echo TESTS PASSED || { echo TESTS FAILED; exit 1; }"
   }
 }

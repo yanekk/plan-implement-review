@@ -8,7 +8,7 @@ import { realpathSync } from 'node:fs';
 import { PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { DRILL_SLUG } from './fake/sessions.mjs';
 import { listRecords } from './index-store.mjs';
-import { BRIEF, SIZES, esc, LEFT, ENTER, DOWN, typeSettled, buildRig } from './plan-rig-helpers.mjs';
+import { BRIEF, SIZES, esc, LEFT, ENTER, DOWN, typeSettled, buildRig, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 // ---- box-commands T04: `@repo/start` starts, or opens, a build from the box (DESIGN §2.2, §2.4). ----
 // The coordinator-drill set commits the reviewed three-task plan DRILL_SLUG in the rig repo, so `/start` has a
@@ -41,7 +41,7 @@ for (const [cols, rows] of SIZES) {
       const picked = (await screen.waitFor(new RegExp(`^@repo/start ${DRILL_SLUG}\\s*$`, 'm'))).join('\n');
       assert.match(picked, /↵ start the build · esc clear/);
       screen.send(ENTER);
-      await screen.waitFor(liveView, 20000);
+      await screen.waitFor(liveView, SPAWNED_MS);
       assert.equal(screen.overflows(), 0);
     } finally {
       await screen.close();
@@ -61,7 +61,7 @@ test('end to end at 120×40: with the build running, @repo/start reads · buildi
     await typeSettled(screen, 'repo/start ');
     await screen.waitFor(new RegExp(`→ ${DRILL_SLUG} +0/3 done`));
     await typeSettled(screen, ENTER, ENTER);
-    await screen.waitFor(liveView, 20000);
+    await screen.waitFor(liveView, SPAWNED_MS);
     const first = listRecords({ dir });
     assert.equal(first.length, 1);
     screen.send(LEFT);
@@ -69,7 +69,7 @@ test('end to end at 120×40: with the build running, @repo/start reads · buildi
     await typeSettled(screen, 'repo/start ');
     await screen.waitFor(new RegExp(`→ ${DRILL_SLUG} +\\d/3 done · building`));
     await typeSettled(screen, ENTER, ENTER);
-    await screen.waitFor(liveView, 20000);
+    await screen.waitFor(liveView, SPAWNED_MS);
     const again = listRecords({ dir });
     assert.equal(again.length, 1, 'no second run');
     assert.equal(again[0].pid, first[0].pid, 'the same run, opened');
@@ -105,7 +105,7 @@ test("end to end at 80×24: `@repo/plan a brief` (happy set) still lands in the 
     await screen.waitFor(/new {2}start with @repo/);
     await typeSettled(screen, 'repo/plan ', BRIEF);
     screen.send(ENTER);
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS);
   } finally {
     await screen.close();
   }

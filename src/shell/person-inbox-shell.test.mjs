@@ -21,7 +21,11 @@ import { startWorker } from './worker-proc.mjs';
 import { startTimeOf } from './identity.mjs';
 import { fakeClaudeSpawner, turn } from './fake/claude-stream.mjs';
 import { RIG_BANG_REPLY, RIG_HAND_COMMAND, RIG_HAND_ID, RIG_HAND_REASON, RIG_HAND_REPLY, startRig } from './conversation-rig.mjs';
-import { scratchHome } from './conversation-rig-helpers.mjs';
+import { quietShellEnv, scratchHome } from './conversation-rig-helpers.mjs';
+
+// The person's real shell is `$SHELL -i`, which loads the developer's own rc file: seconds a start on a busy
+// machine, enough to run these waits out. The real-process tests run it with no rc file instead.
+const QUIET_SHELL = { ...process.env, SHELL: '/bin/sh' };
 
 async function waitFor(pred, what, ms = 8000) {
   const start = Date.now();
@@ -405,7 +409,7 @@ test('a real command: its record exists while it runs and is gone after; the age
   const dir = join(mkdtempSync(join(tmpdir(), 'pir-bang-real-')), 'control');
   t.after(() => rmSync(join(dir, '..'), { recursive: true, force: true }));
   const platform = fakePlatform();
-  const inbox = startPersonInbox({ controlDir: dir, platform, watch: quietWatch(), shellsDir: shellsDirOf(dir) });
+  const inbox = startPersonInbox({ controlDir: dir, platform, watch: quietWatch(), shellsDir: shellsDirOf(dir), env: QUIET_SHELL });
   t.after(() => inbox.stop());
   dropPersonInput(dir, { to: 'W1', kind: 'shell', command: 'printf "hi\\n"; sleep 0.3' }, { coordinatorAlive: true });
   inbox.drain();
@@ -427,7 +431,7 @@ test('a command running across a control-folder rename keeps its busy check and 
   mkdirSync(from, { recursive: true });
   const platform = fakePlatform();
   const shells = createShellTable();
-  const startOn = (controlDir) => startPersonInbox({ controlDir, platform, watch: quietWatch(), shells, shellsDir: shellsDirOf(controlDir) });
+  const startOn = (controlDir) => startPersonInbox({ controlDir, platform, watch: quietWatch(), shells, shellsDir: shellsDirOf(controlDir), env: QUIET_SHELL });
   let inbox = startOn(from);
   t.after(() => {
     inbox.stopAll('session-closed');
@@ -609,7 +613,7 @@ const rigLog = (rig) => readLog(rig.logPath);
 
 test('rig bang: a hand-written shell drop of printf hi reaches the log and the agent; shell-stop on sleep 30 ends it stopped', async (t) => {
   const env = scratchHome(t);
-  const rig = startRig({ env, scenario: 'bang', paceMs: 0 });
+  const rig = startRig({ env, shellEnv: quietShellEnv(env), scenario: 'bang', paceMs: 0 });
   t.after(() => rig.stop());
   const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
   await waitFor(() => rig.platform.list()[0]?.state === 'idle', 'the opening turn to end');
@@ -650,7 +654,7 @@ const controlReplyTo = (rig, requestId) =>
 
 async function handRig(t) {
   const env = scratchHome(t);
-  const rig = startRig({ env, scenario: 'hand', paceMs: 0 });
+  const rig = startRig({ env, shellEnv: quietShellEnv(env), scenario: 'hand', paceMs: 0 });
   t.after(() => rig.stop());
   const drop = (input) => assert.deepEqual(dropPersonInput(rig.controlDir, { to: rig.workerId, ...input }, { coordinatorAlive: true }), { ok: true });
   const req = await waitFor(() => rigLog(rig).find((e) => e.dir === 'request' && e.requestId === RIG_HAND_ID), 'the hand request');

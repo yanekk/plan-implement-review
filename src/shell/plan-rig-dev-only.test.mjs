@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { PLAN_RIG_SLUG, PLAN_RIG_QUESTION, SINGLE_RIG_TEST_LINE } from './plan-rig.mjs';
-import { git, BRIEF, SIZES, esc, LEFT, ENTER, rigWithTeardown } from './plan-rig-helpers.mjs';
+import { git, BRIEF, SIZES, esc, LEFT, ENTER, rigWithTeardown, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 // ---- base-branch T09: the whole flow in a repo with only `dev`, whose remote dev is ahead (DESIGN §1, §2.9).
 // The drill judged every line naming a branch; each screen seen is kept so a stray `main` anywhere fails.
@@ -36,12 +36,12 @@ for (const [cols, rows] of SIZES) {
     const seen = new Set();
     const sampler = setInterval(() => seen.add(screen.text()), 40);
     try {
-      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS)).join('\n');
       assert.match(conv, /^plan +worker \w+ · live/m, "the planner's conversation opens");
       screen.send(ENTER);
-      await screen.waitFor(/^review +worker/m, 30000);
+      await screen.waitFor(/^review +worker/m, SPAWNED_MS);
       screen.send(LEFT);
-      const go = (await screen.waitFor(/Start the parallel build now\?/, 30000)).join('\n');
+      const go = (await screen.waitFor(/Start the parallel build now\?/, SPAWNED_MS)).join('\n');
       assert.match(go, new RegExp(`${PLAN_RIG_SLUG} · reviewed · pir/${PLAN_RIG_SLUG}`));
       screen.send(ENTER);
       const preparing = (await screen.waitFor(/preparing: syncing dev, writing the report/, 60000)).join('\n');

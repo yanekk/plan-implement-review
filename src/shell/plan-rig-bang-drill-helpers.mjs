@@ -12,7 +12,7 @@ import { appendFileSync, readdirSync, readFileSync, realpathSync } from 'node:fs
 import { join, sep } from 'node:path';
 import { BANG_HAND_COMMAND, BANG_HAND_REASON, BANG_HAND_REPLY, BANG_HAND_SLUG, BANG_REPLY } from './fake/sessions.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
-import { BRIEF, ENTER, LEFT, RIGHT, DOWN, UP, git, ndjson, rigWithTeardown, typeSettled, until } from './plan-rig-helpers.mjs';
+import { BRIEF, ENTER, LEFT, RIGHT, git, ndjson, rigWithTeardown, selectRow, typeSettled, until } from './plan-rig-helpers.mjs';
 
 // A machine busy with the other test files stretches every wait.
 const SLOW = 60000;
@@ -175,13 +175,7 @@ export function defineBangDrill([cols, rows]) {
       // T01's conversation: the pin, run with Enter; the worker gets the result and goes on.
       screen.send(LEFT);
       await screen.waitFor(/c coordinator/);
-      for (const key of [null, ...Array(4).fill(UP), ...Array(4).fill(DOWN)]) {
-        if (key) {
-          screen.send(key);
-          await screen.waitFor();
-        }
-        if (rowOf(screen.text()).startsWith('▎')) break;
-      }
+      await selectRow(screen, 'T01');
       assert.ok(rowOf(screen.text()).startsWith('▎'), `T01 selected:\n${screen.text()}`);
       screen.send(RIGHT);
       await screen.waitFor(/^! T01 asks you to run a command\s*$/m, SLOW);

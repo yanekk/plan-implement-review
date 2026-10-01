@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { join } from 'node:path';
 import { startPlanRig, PLAN_RIG_QUESTION } from './plan-rig.mjs';
 import { indexDir, listRecords, writeRecord } from './index-store.mjs';
-import { git, BRIEF, SIZES, esc, LEFT, ENTER, rigWithTeardown, TAB, typeSettled } from './plan-rig-helpers.mjs';
+import { git, BRIEF, SIZES, esc, LEFT, ENTER, rigWithTeardown, TAB, typeSettled, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 // ---- T13: the brief box, and where `pir plan` lands, end to end (DESIGN §2.12, §2.13). ----
 
@@ -31,7 +31,7 @@ for (const [cols, rows] of SIZES) {
       const typed = (await screen.waitFor(/to the blog please/)).join('\n');
       assert.match(typed, /^Add dark mode\nto the blog please$/m, 'two lines in the box');
       screen.send(ENTER);
-      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS)).join('\n');
       assert.match(conv, /^plan +worker \w+ · live/m, "the planner's conversation, not the steps view");
       assert.match(conv, /pir ▸ Load the pir-plan skill/, "pir's first message");
       assert.match(conv, /^ +Add dark mode\n +to the blog please$/m, 'the brief, with its newline, inside it');
@@ -48,7 +48,7 @@ test("end to end at 80×24: `pir plan \"one line brief\"` lands in the planner's
   const rig = rigWithTeardown(t);
   const screen = rig.openScreen({ cols: 80, rows: 24, args: ['plan', 'one line brief'] });
   try {
-    const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+    const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS)).join('\n');
     assert.match(conv, /^plan +worker \w+ · live/m);
     assert.match(conv, /one line brief/);
     assert.doesNotMatch(screen.text(), /esc cancel/);
@@ -61,15 +61,15 @@ test("end to end at 120×40: still in the planner's conversation when it finishe
   const rig = rigWithTeardown(t);
   const screen = rig.openScreen({ cols: 120, rows: 40, args: ['plan', BRIEF] });
   try {
-    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000);
+    await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS);
     screen.send(ENTER); // the first option is selected: answer it, and the fake planner finishes
-    const conv = (await screen.waitFor(/^review +worker/m, 30000)).join('\n');
+    const conv = (await screen.waitFor(/^review +worker/m, SPAWNED_MS)).join('\n');
     assert.match(conv, /^the planner finished; the reviewer has started\nreview +worker \w+/, 'the line heads the view');
     assert.equal(screen.overflows(), 0);
     screen.send(LEFT);
     // The fake reviewer finishes on its own a moment after it starts; under load ← can land while it still
     // reads `reviewing`, so the steps view is waited for with the review done, not read on its first frame.
-    const steps = (await screen.waitFor((x) => /pick a step|Start the parallel build now\?/.test(x) && /✔ review +reviewer/.test(x), 30000)).join('\n');
+    const steps = (await screen.waitFor((x) => /pick a step|Start the parallel build now\?/.test(x) && /✔ review +reviewer/.test(x), SPAWNED_MS)).join('\n');
     assert.match(steps, /  ✔ plan +planner +plan written/);
     assert.match(steps, /▎ ✔ review +reviewer/, 'the row of the conversation just left is selected');
   } finally {
@@ -142,8 +142,8 @@ for (const [cols, rows] of SIZES) {
       screen.send(BRIEF);
       await screen.waitFor(/↵ start planning · shift\+↵ new line · esc clear/);
       screen.send(ENTER);
-      await screen.waitFor(/starting the planner…|pir ▸ Load the pir-plan skill/, 20000);
-      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), 20000)).join('\n');
+      await screen.waitFor(/starting the planner…|pir ▸ Load the pir-plan skill/, SPAWNED_MS);
+      const conv = (await screen.waitFor(new RegExp(esc(PLAN_RIG_QUESTION)), SPAWNED_MS)).join('\n');
       assert.match(conv, /^plan +worker \w+ · live/m, "the planner's conversation");
       assert.match(conv, /pir ▸ Load the pir-plan skill/, "pir's first message");
       assert.equal(screen.overflows(), 0);

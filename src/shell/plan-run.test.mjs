@@ -38,6 +38,12 @@ async function waitFor(fn, what, ms = 15000) {
   }
 }
 
+// gate(file, { tenths }) → a `sh` step that waits (at most tenths/10 s, 10 s by default) for `file` to
+// exist. A session parked on it is closed or killed mid-step, so the step is not recorded as done and a
+// resumed fake re-runs it; the test creates the file before the resume, so the re-run passes at once.
+// Bounded, so an orphaned wait ends.
+const gate = (file, { tenths = 100 } = {}) => ({ sh: `i=0; while [ ! -f ${q(file)} ] && [ $i -lt ${tenths} ]; do sleep 0.1; i=$((i+1)); done` });
+
 // A scratch repo with main, the plan branch opened as startPlanRun (T08) will open it, the control folder
 // with brief.md and state.json, the index entry, and the fake `claude` behind a shim.
 function setup(t, scripts, { indexEntry = true } = {}) {
@@ -226,13 +232,20 @@ test('planner: a message with a preface is forwarded with the note first; the lo
 
 test('planner: an accepted planned, then an uncommitted edit before idle → re-checked at idle, not closed', async (t) => {
   const slug = 'edited-after';
+  const s = setup(t, []);
+  // After the report is read and accepted (the session still busy), the planner leaves a stray file. The
+  // stray waits on a gate the test opens only once it has seen the acceptance: a fixed sleep here let a
+  // loaded machine read the report after the touch, so the report-time check failed instead of the idle one.
+  // The gate is bounded at 60 s rather than 10 s because what it waits on is the fake planner's chain of
+  // child processes (spawn, git commit, the report) and pir's pickup, which a loaded machine slows down.
+  const accepted = join(s.dir, 'accepted-gate');
   const script = quickPlanner(slug);
-  // After the report is read and accepted (the session still busy), the planner leaves a stray file.
-  script.splice(4, 0, { sleep: 1500 }, { sh: 'touch stray.txt' });
-  const s = setup(t, [{ match: PLANNER_MATCH, script }]);
+  script.splice(4, 0, gate(accepted, { tenths: 600 }), { sh: 'touch stray.txt' });
+  writeFileSync(join(s.dir, 'fake', 'scripts.json'), JSON.stringify([{ match: PLANNER_MATCH, script }]));
   const run = start(s);
   t.after(() => run.stop.abort());
-  await waitFor(() => run.lines.some((l) => /checks for planned edited-after: ok/.test(l)), 'the report accepted while busy');
+  await waitFor(() => run.lines.some((l) => /checks for planned edited-after: ok/.test(l)), 'the report accepted while busy', 60000);
+  writeFileSync(accepted, '');
   const msg = await waitFor(() => planLog(s).find((e) => e.dir === 'out' && /did not accept/.test(e.text ?? '')), 'the failure at idle');
   assert.match(msg.text, /uncommitted changes/);
   assert.equal(stateOf(s).step, 'plan');
@@ -324,7 +337,10 @@ test('the program under SIGTERM with a session that will not go: `stopped` is re
   await waitFor(() => planLog(s).some((e) => e.dir === 'in' && e.event.type === 'system'), 'the planner init');
   const { pid } = workersOf(s)[0];
   child.kill('SIGTERM');
-  await waitFor(() => indexOf(s).finalState === 'stopped', '`stopped` in the index', 1000);
+  // "Before the close ends" is held by the live-pid check below, not by this ceiling: the close of a
+  // session that will not go takes seconds, so a `stopped` written only after it would find the pid dead.
+  // A 1 s ceiling here only measured how fast a loaded machine schedules the program's SIGTERM handler.
+  await waitFor(() => indexOf(s).finalState === 'stopped', '`stopped` in the index');
   assert.equal(readSnapshot(s.controlDir).finalState, 'stopped');
   assert.doesNotThrow(() => process.kill(pid, 0), 'recorded while the session is still being closed');
   assert.equal(await exited, 0);
@@ -336,10 +352,6 @@ test('the program under SIGTERM with a session that will not go: `stopped` is re
 
 // ---- T07: the rename, the reviewer, and resume. ----
 
-// gate(file) → a `sh` step that waits (at most 10 s) for `file` to exist. A session parked on it is
-// closed or killed mid-step, so the step is not recorded as done and a resumed fake re-runs it; the test
-// creates the file before the resume, so the re-run passes at once. Bounded, so an orphaned wait ends.
-const gate = (file) => ({ sh: `i=0; while [ ! -f ${q(file)} ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done` });
 const reviewLog = (dir, n = 1) => readLog(join(dir, 'conversations', `review-${n}.ndjson`));
 const pirTexts = (log) => log.filter((e) => e.dir === 'out' && e.from === 'pir' && e.kind === 'message').map((e) => e.text);
 const argvs = (s) => readFileSync(s.received, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.argv).map((x) => x.argv);
@@ -850,7 +862,9 @@ test('planner: a `!` drop runs in the plan worktree and its result reaches the p
   const drop = (input) => assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, ...input }, { coordinatorAlive: true }), { ok: true });
 
   drop({ kind: 'shell', command: 'pwd' });
-  const end = await waitFor(() => planLog(s).find((e) => e.dir === 'shell' && e.kind === 'end'), 'the command to end');
+  // The command runs in the person's own shell with its rc file loaded (`zsh -ic`, person-shell.mjs), a
+  // child that takes seconds to start on a loaded machine, so this wait gets a 60 s ceiling, not 15 s.
+  const end = await waitFor(() => planLog(s).find((e) => e.dir === 'shell' && e.kind === 'end'), 'the command to end', 60000);
   const begun = planLog(s).find((e) => e.dir === 'shell' && e.kind === 'start');
   assert.equal(realpathSync(begun.cwd), realpathSync(s.worktree));
   const output = planLog(s).filter((e) => e.dir === 'shell' && e.kind === 'output').map((e) => e.text).join('');
@@ -870,7 +884,10 @@ test('planner: a `!` drop runs in the plan worktree and its result reaches the p
   assert.equal(ends.length, 2);
   assert.deepEqual([ends[1].stopped, ends[1].sent], ['session-closed', 'none']);
   assert.equal(planLog(s).filter((e) => e.dir === 'out' && e.shell).length, 1, 'nothing sent for the stopped one');
-  assert.equal(existsSync(record), false);
+  // stopAll logs the end before the shell has gone and keeps the record until the shell's own exit
+  // (person-inbox.mjs onEnd, DESIGN §2.4), which a loaded machine can deliver after run.done resolves; so
+  // wait for the record to go rather than read it at once. 60 s: the wait is on a killed child's exit.
+  await waitFor(() => !existsSync(record), 'the running record to be removed', 60000);
   await waitFor(() => {
     try {
       process.kill(pid, 0);

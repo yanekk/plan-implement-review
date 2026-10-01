@@ -192,8 +192,10 @@ export function defineSingleDrill([cols, rows]) {
     const screen = rig.openScreen({ cols, rows });
     try {
       await startFromBox(screen, 'make it bigger');
-      await screen.waitFor(/Shall I drop it/, SLOW);
-      assert.ok(flat(await screen.waitFor()).includes(SINGLE_RIG_DROP_ASK));
+      // The whole ask is waited for rather than read off the next quiet frame, which on a loaded machine can be one
+      // drawn before the rest of the message arrived.
+      const ask = await screen.waitFor((x) => /Shall I drop it/.test(x) && flat(x.split('\n')).includes(SINGLE_RIG_DROP_ASK), SLOW);
+      assert.ok(flat(ask).includes(SINGLE_RIG_DROP_ASK));
       await typeSettled(screen, 'Yes, drop it.');
       screen.send(ENTER);
       await screen.waitFor(/Dropped, as agreed\./, SLOW);

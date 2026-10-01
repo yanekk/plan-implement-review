@@ -49,6 +49,11 @@ function configure(repo) {
   git(repo, ['config', 'user.email', 'coordinator@test.local']);
   git(repo, ['config', 'user.name', 'PIR Test']);
   git(repo, ['config', 'commit.gpgsign', 'false']);
+  // git 2.5x forks a detached `git maintenance run --auto` after commits and merges; still repacking into
+  // .git/objects when cleanup() removes the repo, it failed the rm with ENOTEMPTY under load. A scratch repo
+  // never needs it. (npm test also turns it off for every git it starts, through GIT_CONFIG_*.)
+  git(repo, ['config', 'maintenance.auto', 'false']);
+  git(repo, ['config', 'gc.auto', '0']);
 }
 
 // createFakeWorktree({ progress, files, slug }) → a worktree object plus test introspection.

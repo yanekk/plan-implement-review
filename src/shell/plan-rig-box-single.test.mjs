@@ -10,7 +10,7 @@ import { SINGLE_ID_RE } from '../core/singleflow.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { SINGLE_HINT } from './list-view.mjs';
 import { SINGLE_RIG_NAME, SINGLE_RIG_QUESTION } from './plan-rig.mjs';
-import { git, SIZES, ENTER, LEFT, TAB, esc, until, typeSettled, lastLine, rigWithTeardown, headOf, showsPopup, boxText, clearBox } from './plan-rig-helpers.mjs';
+import { git, SIZES, ENTER, LEFT, TAB, esc, until, typeSettled, lastLine, rigWithTeardown, headOf, showsPopup, boxText, clearBox, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
 const recordsOf = (rig) => listRecords({ dir: indexDir({ env: rig.env }) });
 // The pop-up's rows: under the box's bottom border (head, border, text, border), above the hint line.
@@ -33,7 +33,7 @@ for (const [cols, rows] of SIZES) {
       screen.send(ENTER);
 
       // The builder's conversation, with its question showing: the box is gone.
-      const asked = await screen.waitFor(new RegExp(esc(SINGLE_RIG_QUESTION)), 30000);
+      const asked = await screen.waitFor(new RegExp(esc(SINGLE_RIG_QUESTION)), SPAWNED_MS);
       assert.match(asked[0], /^build {2}worker \S+ · live/, asked.join('\n'));
       assert.ok(!asked.some((l) => l.startsWith('new  ')), 'no box in the conversation');
       assert.ok(asked.some((l) => l.includes('I read the change that was asked for.')), "the builder's own words");

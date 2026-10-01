@@ -303,7 +303,10 @@ test('SIGTERM to pir leaves no mouse mode set, and pir exits 143 through its own
 // to it, interrupt it, step back out. Each capture waits for what that key should bring up.
 test('the driver walks the tour on the real pir screen', { timeout: 90000 }, async (t) => {
   const env = scratchHome(t);
-  const rig = startRig({ env, paceMs: 0, workMs: 4000 });
+  // holdFor: the `stop me` turn works until the Esc lands. With only workMs, a loaded machine spent the 4 s
+  // between the worker's `Working on it.` and the Esc reaching it (pir's settle, the capture, the key's trip
+  // through the inbox), the turn ended on its own, and the Esc found nothing to interrupt.
+  const rig = startRig({ env, paceMs: 0, workMs: 4000, holdFor: 'stop me' });
   t.after(() => rig.stop());
   const cols = 100;
   const rows = 30;
