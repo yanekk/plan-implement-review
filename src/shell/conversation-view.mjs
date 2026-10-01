@@ -124,6 +124,21 @@ export const SHELL_BUSY = 'a command is already running · esc stops it';
 //   onBack — called on ← with an empty box: the caller steps back to the run's live view.
 //   tui    — the pi-tui screen (requestRender, terminal.rows); a stub when there is none.
 //   now    — the clock the running command's elapsed time is read from.
+// handRunCameToNothing(entries, requestId, from) → true when, after log index `from`, the host refused a run
+// (a `shell-refused` note) or a run carrying `requestId` ended. Called only while the request is still
+// pending, so either means the run did not answer it.
+function handRunCameToNothing(entries, requestId, from) {
+  const ours = new Set();
+  for (let i = from; i < entries.length; i++) {
+    const e = entries[i];
+    if (!e || typeof e !== 'object') continue;
+    if (e.dir === 'note' && e.kind === 'shell-refused') return true;
+    if (e.dir === 'shell' && e.kind === 'start' && e.requestId === requestId) ours.add(e.id);
+    if (e.dir === 'shell' && e.kind === 'end' && ours.has(e.id)) return true;
+  }
+  return false;
+}
+
 export function createConversationView({
   run,
   worker,
@@ -146,6 +161,10 @@ export function createConversationView({
   let lastHeight = null; // the scrollback's height at the last paint
   let prompt = null; // the pinned request's gate or picker, as the person has driven it
   const answered = new Set(); // requestIds this view dropped an answer for, until the log shows the reply
+  // A hand request answered by a run (requestId → the log length at the drop). Unlike a reply, a run can come
+  // to nothing with the request still pending: the host refuses it (a `shell-refused` note), or its end could
+  // not deliver the answer. Either releases it from `answered`, so the pin comes back to be run again.
+  const handRuns = new Map();
   let status = null; // a one-shot { text, style } line
   let escGate = null; // the armed Esc warning while helpers run (visible-helpers DESIGN §2.5); null when not armed
   let focused = false;
@@ -210,6 +229,13 @@ export function createConversationView({
     if (!pinned) prompt = null;
     else if (pinned.requestId !== prompt?.requestId) prompt = pinned;
     for (const id of [...answered]) if (!activity.pending.some((r) => r.requestId === id)) answered.delete(id);
+    for (const [id, from] of [...handRuns]) {
+      if (!answered.has(id)) handRuns.delete(id);
+      else if (handRunCameToNothing(entries, id, from)) {
+        answered.delete(id);
+        handRuns.delete(id);
+      }
+    }
     if (editor && !readOnly) {
       const names = slashCommandsOf(entries);
       if (names.join('\n') !== offered) {
@@ -256,7 +282,10 @@ export function createConversationView({
       return false;
     }
     if (!send({ kind: 'shell', command, ...(requestId ? { requestId } : {}) }, 'your command')) return false;
-    if (requestId) answered.add(requestId);
+    if (requestId) {
+      answered.add(requestId);
+      handRuns.set(requestId, entries.length);
+    }
     return true;
   }
 

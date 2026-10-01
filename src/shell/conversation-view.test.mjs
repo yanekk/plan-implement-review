@@ -1332,3 +1332,23 @@ test('declined, the scrollback reads `· declined: {text}` once the reply is log
   assert.match(t.text(), /^! T05 asked you to run: printf handed\n {2}· declined: not now$/m);
   assert.doesNotMatch(t.text(), /asks you to run a command/);
 });
+
+test('a hand run the host refused, or one that ended with the request still pending, brings the pin back', () => {
+  let t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 1);
+  t.push(entry({ dir: 'note', kind: 'shell-refused', command: 'printf handed', reason: 'busy' }));
+  let s = t.text();
+  assert.doesNotMatch(s, /answer sent/);
+  assert.match(s, /! T05 asks you to run a command/);
+  t.v.handleInput(KEY.enter);
+  assert.equal(t.drops.length, 2, 'Enter runs it again');
+
+  t = makeView({ log: [init(), opening, hand()] });
+  t.v.handleInput(KEY.enter);
+  t.push(handStart('sh-1', 'printf handed'));
+  t.push(entry({ dir: 'shell', kind: 'end', id: 'sh-1', code: 0, signal: null, stopped: null, ms: 1000, sent: 'undelivered' }));
+  s = t.text();
+  assert.doesNotMatch(s, /answer sent/);
+  assert.match(s, /! T05 asks you to run a command/);
+});
