@@ -29,10 +29,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | bang-view | T02, T03 | ⬜ | |
 | T07 | hand-view | T05, T06 | ⬜ | |
 | T08 | bang-drill | T06, T07 | ⬜ | |
-| T09 | agent-rules | T05 | ⬜ | |
+| T09 | agent-rules | T05 | 🔍 | `hand_command` rules in pir-worker (new subsection), pir-plan, pir-review-plan, pir-single (**Handing a command.**), pointer lines in pir-implement and pir-review. `hand-skills.test.mjs`, 8 tests, covers all six plus coordinator/finisher silence. Deviation: one new test file instead of editing `planning-skills`/`single-skill` tests; none of those failed. |
 | T10 | docs-readme | T08, T09 | ⬜ | |
 
-**Review queue:** empty
+**Review queue:** T09
 
 ## Blocked on the user
 

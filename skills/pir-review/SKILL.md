@@ -174,7 +174,9 @@ both files with fresh eyes and you can see which rows have stopped earning their
 A task whose automated half is green and whose hands-on half has never been seen is not ✅ on
 the strength of the tests alone. Say which half is which — in `PROGRESS.md` and in the report
 — and give the user the exact command with its seatbelt. Never run the unbounded dangerous
-version to find out for yourself.
+version to find out for yourself. In a `pir` run, a command only the person can run (their login,
+their account, their device) is handed with the `hand_command` tool, never round a permission or an
+`ask` row, and always with a reason the person can judge: see `pir-worker § Handing the person a command`.
 
 A hands-on half is one no tool you could write would have closed — a device, a login only the
 user holds, a camera, an unwatchable run. How a screen looks or feels is not one: that is a drill. A live action in the `worker` or
