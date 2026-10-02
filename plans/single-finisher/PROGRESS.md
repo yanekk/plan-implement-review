@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | base-watch | — | ✅ | |
-| T02 | finisher-for-single | — | ⬜ | |
+| T02 | finisher-for-single | — | ✅ | |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ⬜ | |
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ⬜ | |
