@@ -1126,6 +1126,21 @@ test('resume with a helper on record → resumeSession; tests in flight → star
   assert.deepEqual(dE(noId, { resume: true, syncPending: true }).actions, [{ type: 'abortSync' }, { type: 'prepareBase', mode: 'start' }]);
 });
 
+test('resumed mid re-sync, red after the fix → fallback red with no closeFinisher for a finisher not held', () => {
+  // Reproduced by script in the T03 review: the red closed a finisher this program never started.
+  const s = syncTesting();
+  const mid = { ...s, end: { ...s.end, finisher: 'on', fixUsed: true } };
+  const x = dE(mid, { resume: true });
+  assert.deepEqual(x.actions, [{ type: 'runTests', head: null }]);
+  const r = dE(x.state, { commandDone: sRed() });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.end.finisher, 'fallback');
+  assert.equal(r.state.end.fallback, 'red');
+  assert.equal(r.state.end.tests, 'red');
+  // Held: the same red closes it.
+  assert.deepEqual(dE(x.state, { commandDone: sRed(), finisher: FIN() }).actions, [{ type: 'closeFinisher' }]);
+});
+
 test('resume in wait: finisher on → startFinisher; its phase done → finished', () => {
   assert.deepEqual(dE(finisherOn(), { resume: true }).actions, [{ type: 'startFinisher' }]);
   assert.deepEqual(dE(finisherOn(), { resume: true, finisher: { started: false, phase: 'done' } }).actions, [{ type: 'finish', outcome: 'finished' }]);

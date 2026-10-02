@@ -651,8 +651,9 @@ function endStep(s, facts, actions, baseFinish) {
         }
       }
     } else if (e.finisher === 'on') {
-      // Red under the finisher: closed for good; never handed over again in this run (§2.5 step 1).
-      fallBack('red');
+      // Red under the finisher: closed for good; never handed over again in this run (§2.5 step 1). A
+      // finisher this program does not hold (resumed mid re-sync) has nothing to close.
+      fallBack('red', { close: fin?.started === true });
     }
   };
 
