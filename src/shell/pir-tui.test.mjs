@@ -3312,3 +3312,23 @@ test('listColumns at 60 columns beside `● ready for your go`: REPO gives way s
   assert.match(text.split('\n').find((l) => l.includes('fix-typo')).slice(0, 60), /build ✓ re/);
   assert.equal(listColumns(rows, 80).repo, 12, '80 columns as before');
 });
+
+test('the steps view of a single run resolving a clash, and of its fix helper asking, at 60, 80 and 120 columns (T07 review)', () => {
+  const clash = singleRow({ name: 'fix-typo', over: endOver({ step: 'sync', live: true }, { phase: 'resolving', finisher: null, tests: null, sync: { state: 'conflict' } }), sessions: [...DONE_SESS, sSess('resolve', 'busy')], extra: { since: { resolve: NOW - 65_000 } } });
+  const asking = singleRow({ name: 'fix-typo', over: endOver({ step: 'sync', live: true }, { phase: 'fixing', finisher: null, tests: 'red', fixUsed: true }), sessions: [...DONE_SESS, sSess('fix', 'questions')], extra: { since: { fix: NOW - 5_000 } } });
+  for (const columns of [60, 80, 120]) {
+    const frame = buildWatchFrame(clash, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 2 }, columns });
+    const text = frameText(frame);
+    assert.match(text, /^fix-typo · syncing · pir\/fix-typo$/m, `${columns}`);
+    assert.match(text, /^▎ \S sync +resolve +resolving a clash +1:05$/m, `${columns}`);
+    assert.match(text, /^ {2}○ merge +— +waits on sync$/m, `${columns}`);
+    const ask = frameText(buildWatchFrame(asking, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns }));
+    assert.match(ask, /● sync +fix +asking you · a question/m, `${columns}`);
+    for (const f of [frame, buildWatchFrame(asking, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns })]) {
+      for (const line of f) {
+        const row = line.map((s) => s.text).join('');
+        if (/^(▎| ) /.test(row)) assert.ok(visibleWidth(row) <= columns, `${columns}: ${row}`);
+      }
+    }
+  }
+});
