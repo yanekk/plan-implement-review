@@ -29,6 +29,8 @@ DESIGN §2.6, §2.7, §2.11, §2.8 (single rows).
   `queued` set. The steps view reads `waiting for tests · {nth} in queue`; the dashboard row reads
   `● waiting for tests`; running stays `testing…` / `● testing`.
 - Stop, resume and teardown cancel the run's queue entries.
+- The run's waker also watches the queue folder (T04's `watchPath`), so a freed slot or a kill request is
+  seen at once rather than at the 5 s poll.
 
 ## Tests
 
@@ -41,5 +43,6 @@ DESIGN §2.6, §2.7, §2.11, §2.8 (single rows).
 ## Done when
 
 - [ ] No single-run path runs a suite outside the queue.
+- [ ] No test reaches the real `~/.pir/test-queue`; single-run takes an injected client or dir (DESIGN §5.2).
 - [ ] The listed tests and the existing single-run tests are green in `npm test`.
 - [ ] The row and step texts match DESIGN §2.8.

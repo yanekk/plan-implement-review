@@ -1,6 +1,6 @@
 # T13 — queue-drill
 
-**Phase:** 4 · **Depends on:** T08, T09, T11, T12 · **Weight:** medium
+**Phase:** 4 · **Depends on:** T07, T08, T09, T11, T12 · **Weight:** medium
 
 ## Goal
 

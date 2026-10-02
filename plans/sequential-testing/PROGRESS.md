@@ -9,9 +9,9 @@ touching the task you pick up, and append yours there.
 **Sixty words to a Notes cell, counted.** Flat prose. The cell is an index for the next session;
 the account is the commit message. Whoever writes a cell also fixes the over-budget cell they walk past.
 
-**Plan reviewed:** not yet — run `/pir-review-plan` before the first `/pir-work`
+**Plan reviewed:** 2026-10-02 — 10 fixed, 2 decided with the user
 
-**Status:** Planned 2026-10-02. Nothing built. Start only after `pir/single-finisher` is merged to main (PLAN.md).
+**Status:** Planned 2026-10-02. Nothing built. Start only after `pir/single-finisher` is merged to main and main into `pir/sequential-testing` (PLAN.md).
 **Last updated:** 2026-10-02
 **Next `pir-work` will:** T01 queue-core, the first task with no dependency (T02 is also free).
 
@@ -34,7 +34,7 @@ done · ⛔ blocked, needs a human.
 | T10 | worker-skills | T02 | ⬜ | |
 | T11 | queue-screen | T01, T04 | ⬜ | |
 | T12 | build-rows-on-screen | T03, T05, T06 | ⬜ | |
-| T13 | queue-drill | T08, T09, T11, T12 | ⬜ | |
+| T13 | queue-drill | T07, T08, T09, T11, T12 | ⬜ | |
 | T14 | harness-fixture | T05, T06, T07, T10 | ⬜ | |
 | T15 | docs-readme | T06, T07, T08, T09, T10, T11, T12 | ⬜ | |
 | T16 | live-run | T13, T14, T15 | ⬜ | |

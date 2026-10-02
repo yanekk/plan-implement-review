@@ -105,7 +105,7 @@ because its worker is still alive and may be sent work.
 On a worker's third red the coordinator stops the whole build, as the person's Stop does: it closes every
 worker and the coordinator agent, kills its queued and running suites, leaves every branch and worktree,
 and records the final status `stopped` with a reason
-`{ kind: 'tests-red', task, role, reason, logPath, tries: 3 }`. The person asked for a stop rather than
+`{ kind: 'tests-red', task, taskSlug, role, reason, logPath, tries: 3 }`. The person asked for a stop rather than
 a parked task, because other tasks would otherwise build on a broken area unnoticed.
 
 It sends one phone alert, `{slug} · stopped`, body `T{nn} {task-slug}: pir's tests failed 3 times
@@ -121,8 +121,8 @@ Resume is the existing one (`Ctrl+R Ctrl+R`, `pir start {slug}`). Reconciliation
 
 | Task branch | Green recorded for | Action |
 |---|---|---|
-| `🔍` | implement, at the branch head | review, as today |
-| `🔍` | anything else | a fresh implementer with the retest note |
+| `🔍` | implement, at any sha | review, as today |
+| `🔍` | none for implement | a fresh implementer with the retest note |
 | `✅` | review, at the branch head | merge, as today |
 | `✅` | anything else | a fresh reviewer with the retest note |
 | other | — | resume, as today |
@@ -133,6 +133,11 @@ worktree, and to check `git status` and `git log`, commit what is there if it be
 the tests that failed, and report the same kind again. A fresh worker of the same role is used because
 a build restart has no way to reopen a closed worker's session (the unbuilt `resume-dead-worker` plan);
 the old conversation stays readable in `conversations/`.
+
+A `🔍` branch whose implement green is older than its head is a review the stop interrupted, the
+reviewer's commits on top. A fresh reviewer carries it on; its `done` is tested before the merge, so
+nothing merges untested (user, plan review 2026-10-02: cheaper than a fresh implementer re-proving work
+that already passed, and the implementer would be holding a reviewer's half-done fixes).
 
 Try counts are not persisted, so every worker starts with three. That gives the person's resume three
 fresh tries, as they decided, and a crash restart gets the same, which is harmless. A missing ledger, as
@@ -353,13 +358,13 @@ fake runs and a scratch `PIR_HOME`. Sizes 60×20, 80×24, 120×40.
 
 | Cannot be tested automatically | Why it needs a person |
 |---|---|
-| Whether real workers follow the new contract (wait idle, run only failing tests) | Needs real paid agent sessions; T16 runs it as an `ask` action, and the worker judges the transcript |
+| Whether real workers follow the new contract (wait idle, run only failing tests) | Needs real paid agent sessions; T16 runs it as a `worker` action (§5.3), and the worker judges the transcript |
 
 ### 5.2 Seatbelts
 
 | Flag / mechanism | Default | Effect |
 |---|---|---|
-| `PIR_HOME` | `$HOME` | every test points the queue and the index at a scratch folder, never the real `~/.pir` |
+| `PIR_HOME` | `$HOME` | every test points the queue and the index at a scratch folder, never the real `~/.pir`. This repo's own `npm test` runs inside pir's queue holding the real slot, so a test that enqueued on the real queue would wait on its own outer run until the limit |
 | `testTimeoutMinutes` | 30 | bounds every pir-run suite |
 | harness wall-clock timeout | per fixture | touches HALT on a hung live run so it cannot run or cost on |
 
@@ -368,13 +373,13 @@ fake runs and a scratch `PIR_HOME`. Sizes 60×20, 80×24, 120×40.
 | Action | Command (exact, wrapped) | Bin | Why this bin | Way back | Expected cost | Login check |
 |---|---|---|---|---|---|---|
 | Install the locked packages | `test ! -f package-lock.json \|\| npm ci` | worker | exact locked versions only | delete `node_modules` | none | none |
-| Live build with real agents (T16) | `perl -e 'alarm 1800; exec @ARGV' node src/shell/harness/run.mjs sequential-testing-live --into /tmp/pir-seqtest-live` | ask | real Claude sessions billed through Bedrock on this machine | not reversible (spend); scratch repo only | a few short sessions | `claude auth status` |
+| Live build with real agents (T16) | `perl -e 'alarm 1800; exec @ARGV' node src/shell/harness/run.mjs sequential-testing-live --into /tmp/pir-seqtest-live` | worker | moved down from `ask` by the user at plan review 2026-10-02: bounded by the 30-min alarm, ceiling 2 and a scratch repo, so the spend is small and needs no click; real Claude sessions billed through Bedrock | not reversible (spend); scratch repo only | a few short sessions | `claude auth status` |
 | Scratch teardown | `rm -rf /tmp/pir-seqtest-live` | worker | local scratch only | none needed | none | none |
 | Refresh the installed engine and skills | `./install.sh` | worker | CLAUDE.md requires it after engine or skill changes; local, idempotent | re-run on the previous commit | none | none |
 
 Credentials, measured 2026-10-02: `claude auth status` reports logged in, `authMethod: third_party`,
 `apiProvider: bedrock`. Real sessions are therefore paid usage, not plan limits as earlier plans in this
-repo recorded, which is why the live run is `ask`. `./install.sh` must not run while a build of this
+repo recorded; the user chose to let a worker run the bounded live run without asking anyway. `./install.sh` must not run while a build of this
 plan is going: the installed coordinator would change under it. Run it after the plan's branch merges.
 
 ---
@@ -423,8 +428,11 @@ All with the user, 2026-10-02.
   queue.
 - **A fresh worker on resume**, not the closed worker's session: a build restart cannot reopen a worker
   session today, and building that is `resume-dead-worker`'s job.
-- **Start only after `pir/single-finisher` merges to main.** It rewrites the end of `single-run.mjs` and
-  may add suite runs, all of which T09 must queue.
+- **Start only after `pir/single-finisher` merges to main, and main is merged into `pir/sequential-testing`.**
+  It rewrites the end of `single-run.mjs` and may add suite runs, all of which T09 must queue. A build
+  does not sync its base at start (`docs/branch-model.md`), so without the merge T09 builds on the old file.
+- **Resume sends an interrupted review to a fresh reviewer** (plan review): §2.5.
+- **The T16 live run is `worker`, not `ask`** (plan review): §5.3.
 - **The reviewer's run is skipped only when its commits touch only `plans/{slug}/`.** A strict "no new
   commits" rule never applies, because the reviewer always commits its mark.
 

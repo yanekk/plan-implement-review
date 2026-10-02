@@ -26,6 +26,9 @@ DESIGN §2.7, §2.10, §2.8 (end gate footer).
   the run state carries `testsQueued: { position }`, while running `testing: { since }` as today.
 - A result maps to today's `{ ok, reason }`: a timeout or kill reads as red with T02's `failureReason`
   text and goes the existing red route (the test-fix worker's one attempt, the red hand-off).
+- A pending end-gate job, queued or running, is work in flight as `preparing` is: the pass result carries
+  it and `stallVerdict` never counts such a pass as quiet. With no live workers the run would otherwise be
+  declared finished while its end gate waits in the queue.
 - `showTesting`'s blocking paint is removed: the pass returns and the renderer paints the queued or
   running state like any other.
 
@@ -35,10 +38,12 @@ DESIGN §2.7, §2.10, §2.8 (end gate footer).
 - [ ] while it waits the coordinator keeps passing: the inbox is read and the snapshot is rewritten
 - [ ] red → test-fix worker as today; timeout → red with 'timed out after 30 min'; kill → red with the kill reason
 - [ ] the base-sync rerun also queues
+- [ ] an end gate queued past the stall grace and hold, with no live worker → the run is not ended as stalled
 - [ ] HALT while the end gate is queued or running cancels it and frees the slot
 
 ## Done when
 
 - [ ] No call path in `coordinate.mjs` runs the suite with `runLines`.
+- [ ] No test reaches the real `~/.pir/test-queue` (DESIGN §5.2).
 - [ ] The listed tests and the existing end-of-run tests are green in `npm test`.
 - [ ] The footer reads DESIGN §2.8's queued text while waiting.

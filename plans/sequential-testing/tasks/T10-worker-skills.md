@@ -16,7 +16,7 @@ DESIGN §2.2, §2.3 (what the worker sees), §2.5 (the retest note), §2.9.
 
 ## Files
 
-- `skills/pir-worker/SKILL.md` (§ The test command; the implemented and done hand-off sections, which now say the session stays open until pir's tests are green; a new section on pir's test messages)
+- `skills/pir-worker/SKILL.md` (§ The test command; the implemented and done hand-off sections, which now say the session stays open until pir's tests are green; § If a later merge of your branch conflicts, whose "Run the test command" before re-signalling done becomes the subset rule, since pir tests the re-report; a new section on pir's test messages)
 - `skills/pir-implement/SKILL.md` (step 5 "Leave the test command green": parallel-mode branch pointing at pir-worker)
 - `skills/pir-review/SKILL.md` (check 2 "Tests": parallel-mode branch)
 - `src/core/worker-tests-skill.test.mjs` (new), golden tests over the skill text, in the style of `hand-skills.test.mjs`

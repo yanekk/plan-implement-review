@@ -47,12 +47,13 @@ failureReason(result) → string   // setup/test line and exit as runFeatureTest
 redMessage({ sha, reason, tryNo, logPath, tail, kind }) → string      // DESIGN §2.9, verbatim
 leftoverMessage({ sha, status, kind }) → string                       // DESIGN §2.9
 retestNote({ role }) → string                                         // DESIGN §2.5; names the kind to report
-stopReason({ task, taskSlug, role, reason, logPath }) → { kind: 'tests-red', task, taskSlug, role, reason, logPath, tries: 3 }
+stopReason({ task, taskSlug, role, reason, logPath }) → { kind: 'tests-red', task, taskSlug, role, reason, logPath, tries: 3 }   // DESIGN §2.4
 ```
 
 `resume.mjs`: `decideResume({ featureTasks, branchStates, ledger = {}, heads = {} })` returns
-`{ merge, review, resume, retest: [{ num, role }] }`. A `🔍` branch goes to `review` only when
-`ledger[num]?.implement?.greenSha === heads[num]`, else `retest` with role `implement`; a `✅` branch goes
+`{ merge, review, resume, retest: [{ num, role }] }`. A `🔍` branch goes to `review` when
+`ledger[num]?.implement?.greenSha` is set at any sha (an interrupted review carries on with a fresh
+reviewer, DESIGN §2.5), else `retest` with role `implement`; a `✅` branch goes
 to `merge` only when `ledger[num]?.review?.greenSha === heads[num]`, else `retest` with role `review`.
 Callers that pass no ledger get every `🔍`/`✅` as retest; the existing call site is updated in T07.
 
@@ -67,7 +68,7 @@ Callers that pass no ledger get every `🔍`/`✅` as retest; the existing call 
 - [ ] failureReason: setup line, test line, timeout (30 and 45 min), killed by person
 - [ ] redMessage exact text for tries 1 and 2, kinds implemented and done; tail of zero lines
 - [ ] leftoverMessage with one and several status lines; retestNote for both roles names `implemented` / `done`
-- [ ] decideResume: 🔍 + green at head → review; 🔍 + green at an older sha → retest implement; 🔍 + no ledger → retest
+- [ ] decideResume: 🔍 + green at head → review; 🔍 + green at an older sha → review; 🔍 + no implement green → retest implement; 🔍 + no ledger → retest
 - [ ] decideResume: ✅ + review green at head → merge; ✅ + implement green only → retest review; existing rows unchanged otherwise
 - [ ] decideResume output sorted by task order in every list
 

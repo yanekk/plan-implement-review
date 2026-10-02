@@ -32,6 +32,9 @@ DESIGN §2.1, §2.3, §2.9, §2.12 (worker death, HALT and teardown), §3.4, §3
   `leftover` → send `leftoverMessage`; `red` → send `redMessage`, `t.tries++`, `t.fixing = { tryNo }`,
   phase back to `implementing`/`reviewing`; `stop` → the pass result carries `stopTests: stopReason(...)`
   (acted on by T06; until then the loop treats it as a halt).
+- `onlyPlanFiles` is `git diff --name-only {greenImplementSha} {head}` listing only paths under
+  `plans/{slug}/`. Not `git log --name-only`, which omits a merge commit's changes, so the reviewer's
+  integrate merge of the feature branch would wrongly skip the run.
 - `runPass` options gain `tests` (the queue client) and `ledger` (`{ read(), write(num, role, sha) }`,
   backed by `control/tests.json`, temp-then-rename).
 - `buildRunState` / `displayPhaseFor` carry `tests` and `fixing` onto each task (T03's shape).
@@ -47,7 +50,7 @@ DESIGN §2.1, §2.3, §2.9, §2.12 (worker death, HALT and teardown), §3.4, §3
 - [ ] three reds for the implementer → pass result stopTests with the T02 reason; implementer's 2 reds do not count for the reviewer
 - [ ] head moved after a green → rerun; dirty after green → leftover message sent once, waits for a new report
 - [ ] a new report while queued for an older head → old job cancelled, new one queued
-- [ ] reviewer commits touching only plans/{slug}/ → skip, no run, merge goes ahead
+- [ ] reviewer commits touching only plans/{slug}/ → skip, no run, merge goes ahead; a reviewer merge of the feature branch that brings code → no skip
 - [ ] a task in tests never reads asking and its worker gets no Remote Control; a pending permission request still reads asking
 - [ ] HALT and teardown cancel queued and running jobs and free the slot
 - [ ] ledger written on each green; the log names count up per task
@@ -57,4 +60,6 @@ DESIGN §2.1, §2.3, §2.9, §2.12 (worker death, HALT and teardown), §3.4, §3
 
 - [ ] A build in the loop tests never hands a task to review or merges it without a green run at its head.
 - [ ] Every test above is green in `npm test`, with a scratch `PIR_HOME`.
+- [ ] No test, new or existing, reaches the real `~/.pir/test-queue`: `coordinate` takes an injected
+  queue client or dir, and every existing test that now reaches the gate gets a scratch one (DESIGN §5.2).
 - [ ] The existing loop and coordinate tests pass, updated only where a report now passes through `tests`.

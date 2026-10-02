@@ -6,7 +6,8 @@ interfaces it defines, and what "done" means.
 Track state in [PROGRESS.md](PROGRESS.md). Read [DESIGN.md](DESIGN.md) first.
 
 **Start condition (user decision, 2026-10-02):** start this build only after `pir/single-finisher` is
-merged into main. That build rewrites the end of `src/shell/single-run.mjs` and may add suite runs; T09
+merged into main and main is then merged into `pir/sequential-testing` (a build does not sync its base
+at start, `docs/branch-model.md`). That build rewrites the end of `src/shell/single-run.mjs` and may add suite runs; T09
 must queue every suite run that file starts, so it builds on the merged result. Do not run `./install.sh`
 while this build runs (DESIGN §5.3).
 
@@ -75,7 +76,7 @@ tests; the classic flow is unchanged.
 |---|---|---|
 | [T11](tasks/T11-queue-screen.md) | queue-screen | T01, T04 |
 | [T12](tasks/T12-build-rows-on-screen.md) | build-rows-on-screen | T03, T05, T06 |
-| [T13](tasks/T13-queue-drill.md) | queue-drill | T08, T09, T11, T12 |
+| [T13](tasks/T13-queue-drill.md) | queue-drill | T07, T08, T09, T11, T12 |
 
 At the end: the pinned line, the queue view, the rows and the stopped row are driven in a real
 pseudo-terminal at three sizes, and the drill has used the whole flow.

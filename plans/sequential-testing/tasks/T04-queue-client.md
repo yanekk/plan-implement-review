@@ -49,7 +49,9 @@ job = {
 Every `poll()` (any job of any owner) runs T01's `decideSlot`: removes stale entries, reaps a stale slot's
 command after `isSameProcess` (never signalling a mismatched pid), and, when `next` is its own entry,
 creates `slot.json` with an exclusive create, starts the lines, then rewrites the slot with the command's
-pid and start time. A failed exclusive create means another owner won; the job stays queued. Settling
+pid and start time. `startLines` spawns each line in its own process group, so the slot's `command` is
+rewritten at every line's start; otherwise a reap after a crash during the test line would signal the
+finished setup line's group and leave the suite running. A failed exclusive create means another owner won; the job stays queued. Settling
 removes `slot.json`, the entry and any kill request, then calls `onSettled`.
 
 ## Tests
@@ -60,6 +62,7 @@ removes `slot.json`, the entry and any kill request, then calls `onSettled`.
 - [ ] bump makes a later entry run before an earlier one; bump of the running entry returns false
 - [ ] limit: a `sleep 5` line with limitMs 300 ends timedOut, its process group killed, slot freed
 - [ ] requestKill on the running job → killedByPerson; on a waiting job → false
+- [ ] a two-line job: the slot's command names the second line's process while it runs
 - [ ] a slot whose owner is dead (fake isSameProcess) is reaped and the next entry runs; a mismatched command identity is not signalled but the slot is freed
 - [ ] an entry whose owner is dead is removed and skipped; an unreadable entry file is removed
 - [ ] cancel of a queued job removes its entry; cancel of a running job kills it and frees the slot

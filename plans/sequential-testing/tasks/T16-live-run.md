@@ -19,7 +19,7 @@ DESIGN §2.2, §2.3, §2.6, §5.1.
 
 ## Outside actions
 
-- Live build with real agents (T16) — `ask`
+- Live build with real agents (T16) — `worker` (moved down by the user at plan review, DESIGN §5.3)
 - Scratch teardown — `worker`
 
 ## Environment (the worker owns this)
@@ -38,6 +38,6 @@ observed and reads the implementer's transcript to confirm it ran only the faili
 
 ## Done when
 
-- [ ] The live run was made after the person's yes at the permission prompt, and every fact's result is recorded in FINDINGS.md with the date.
+- [ ] The live run was made, and every fact's result is recorded in FINDINGS.md with the date.
 - [ ] The scratch folder is removed and confirmed gone.
 - [ ] A failed fact is either fixed with a test or recorded as a finding the person has seen.

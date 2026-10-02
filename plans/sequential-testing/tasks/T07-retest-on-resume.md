@@ -32,13 +32,13 @@ DESIGN §2.5.
 
 - [ ] 🔍 branch, ledger green at head → reviewer, as today
 - [ ] 🔍 branch, no ledger → fresh implementer with the retest note; its report goes through tests
-- [ ] 🔍 branch, ledger green at an older sha (the person committed) → fresh implementer
+- [ ] 🔍 branch, implement green at an older sha (an interrupted review) → fresh reviewer, whose done goes through tests
 - [ ] ✅ branch, review green at head → merged with no worker, as today; without → fresh reviewer with the note
 - [ ] the retested worker starts at try 1 of 3 after a resume that followed a third-red stop
 - [ ] restart-summary text includes the retested tasks; a first start prints no summary
 
 ## Done when
 
-- [ ] No reconcile path merges or reviews a branch whose head has no matching green in the ledger.
+- [ ] No reconcile path merges a branch whose head has no review green in the ledger, or reviews one with no implement green.
 - [ ] The listed tests are green in `npm test`.
 - [ ] `restart-review` and `restart-implement` behaviour is unchanged when the ledger is green at head.
