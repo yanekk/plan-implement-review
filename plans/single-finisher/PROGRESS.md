@@ -16,7 +16,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
 | T01 | base-watch | — | ⬜ | |
-| T02 | finisher-for-single | — | 🔍 | `finisherOpening`/`startFinisher` take `kind: 'single'` + `promptPath`; build text snapshot-pinned. Skill covers both kinds; installed, skill diffed equal. 6 new tests, `npm test` green. Deviation: skill's slug bullet says "for a single run, the run's name" and the opening's "command running the build" adds "or the single run"; both read wrong for a single run otherwise. |
+| T02 | finisher-for-single | — | ✅ | Reviewed clean, no fix commit. Build opening checked byte-equal to the pre-change code for all four rules sources; single opening 772 chars. Probed resume path, name parsers, installed engine and skill (equal). Recorded deviation (slug bullet, "build or the single run") accepted. `npm test` green. |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ⬜ | |
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T02
+**Review queue:** empty
 
 ## Blocked on the user
 
