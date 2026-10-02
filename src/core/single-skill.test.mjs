@@ -268,6 +268,10 @@ test('the helpers: both roles keyed on the phrases helperInstruction uses, their
   assert.match(s, /ask the person in this conversation and wait/);
   assert.match(s, /A helper never reports `dropped`/);
   assert.match(s, /change nothing until pir's word arrives/);
+  // The shared sections a helper is told to read must not speak only to the builder and reviewer.
+  assert.match(flat(section('After you report')), /After any report you send/);
+  assert.match(flat(section('After you report')), /A helper gets only the first two: it has no red rounds/);
+  assert.match(flat(section('Dropping')), /The builder or the reviewer may report it \(a helper never\)/);
 });
 
 test('what a single run is: pir hands the branch to the finisher, it no longer shows a merge command (single-finisher §2.4)', () => {

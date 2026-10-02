@@ -1,6 +1,6 @@
 ---
 name: pir-single
-description: The procedure the two sessions of a single run follow, a small change `pir` makes without a plan. Engaged by the opening instruction `pir` gives the builder's or the reviewer's session ("You are run by `pir single`"); never typed by a person. The builder makes the change, commits it, names the branch and reports; the reviewer, a fresh session, reads the change against what was asked, fixes what it finds and reports. `pir` runs the tests itself after each report.
+description: The procedure the sessions of a single run follow, a small change `pir` makes without a plan. Engaged by the opening instruction `pir` gives the builder's, the reviewer's or a helper's session ("You are run by `pir single`"); never typed by a person. The builder makes the change, commits it, names the branch and reports; the reviewer, a fresh session, reads the change against what was asked, fixes what it finds and reports; a resolve or fix helper finishes a clashing merge of the base or fixes the tests after it. `pir` runs the tests itself after each report.
 user-invocable: false
 ---
 
@@ -182,7 +182,7 @@ session.
 
 ## After you report
 
-**Wait for pir's word, and change nothing until it arrives.** After a `built` or `reviewed` report,
+**Wait for pir's word, and change nothing until it arrives.** After any report you send,
 end your turn and go idle with nothing running. Do not edit, commit or tidy while `pir` tests: a
 green result counts only for the commit it tested with a clean worktree, so an edit made meanwhile
 costs a whole further test run. What arrives next is one of:
@@ -199,11 +199,14 @@ costs a whole further test run. What arrives next is one of:
   `past the limit of 3`: stop, tell the person what fails and what you tried, and ask how to go on.
   Report again only after they answer.
 
+A helper gets only the first two: it has no red rounds, and its `fixed` or `resolved` is followed by
+`pir`'s own test run, whatever that shows.
+
 The person may also write to you at any time; answer them and act on what they say.
 
 ## Dropping
 
-`dropped` ends the run with nothing to merge. Either session may report it, and **only after the
+`dropped` ends the run with nothing to merge. The builder or the reviewer may report it (a helper never), and **only after the
 person agreed to it in this conversation**; never on your own judgement. There are two reasons:
 
 - **The change is too big for a single run.** Tell the person why and recommend they plan it with
