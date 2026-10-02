@@ -8,8 +8,9 @@ user-invocable: false
 
 **This skill applies only when your opening instruction contains the sentence "You are run by `pir
 single`".** It is never typed by a person. The instruction says which role you hold: "run it as the
-builder" or "run it as the reviewer of pir/{name}". Read *What binds both sessions*, then your role's
-section, then *After you report* and *Dropping a report*.
+builder", "run it as the reviewer of pir/{name}", "as the resolve helper of pir/{name}" or "as the fix
+helper of pir/{name}". Read *What binds both sessions*, then your role's section, then *After you
+report* and *Dropping a report*.
 
 ## What a single run is
 
@@ -21,7 +22,11 @@ and holds two sessions one after the other:
 2. `pir` runs the project's tests on that commit;
 3. the **reviewer**, a fresh session that did not see the change being written, reads it against
    what was asked, fixes what it finds, commits and reports `reviewed`;
-4. `pir` runs the tests again, then shows the person the command that merges the branch.
+4. `pir` runs the tests again, then merges the base branch into `pir/{name}` if it moved on, runs the
+   tests on the result, and hands the branch to the finisher, a session that prepares the merge and
+   asks the person `Go` before it merges anything. If that merge of the base clashes, or the tests
+   fail after it, `pir` holds one more session, a **helper**, to resolve the clash or fix the tests
+   (*The helpers*).
 
 No plan is written: there is no `PROGRESS.md`, no `FINDINGS.md` and no task doc. The commits and
 this conversation are the whole record.
@@ -47,8 +52,9 @@ auto-approves such a write and your session would stall on it. Git's own command
 
 **Never merge, rebase, push, or touch the base branch.** Do not switch to the base branch, do not
 merge or rebase onto it, do not push anything, and do not rename or delete the branch or the
-worktree. `pir` renames them to the builder's name after the build; the person merges by hand at the
-end. If the base branch has moved on since the run started, leave it: the person's merge handles it.
+worktree. `pir` renames them to the builder's name after the build. If the base branch has moved on
+since the run started, leave it: `pir` merges it in at the end of the run, and the finisher merges the
+branch only after the person's `Go`.
 
 **Scope is the prompt.** Change only what the prompt asks for. Anything else you notice (a second
 bug, a stale comment, a tidier way) you tell the person about and leave alone. If the change cannot
@@ -132,10 +138,47 @@ You did not write this change, and that is the point. Your opening instruction n
    finds nothing commits nothing.
 5. **Report `reviewed`** with the run's name, tell the person in plain English what you found and
    fixed (or that it was clean), and stop. Do not merge and do not tell the person the tests pass:
-   `pir` runs them and then shows the merge command itself.
+   `pir` runs them and then hands the branch on itself.
 
 `pir` checks a `reviewed` report: the worktree clean and the name the run's own. If you committed
 nothing, the builder's green result stands and `pir` does not run the tests again.
+
+## The helpers (resolve and fix)
+
+A helper is held at the end of the run, after the review, when the merge of the base into the run's
+branch went wrong. Your opening instruction says which helper you are: "as the resolve helper of
+pir/{name}" or "as the fix helper of pir/{name}". It names the base and the reports folder, and gives
+your one job. Do that job and nothing else.
+
+**What you may touch.** Work only in the run's worktree, on `pir/{name}`. Never merge into, rebase
+onto, push or switch to the base branch. Never start a merge, and never abort one; the resolve helper
+finishes the one merge already in progress and that is all.
+
+**The resolve helper.** `pir` merged `{base}` into `pir/{name}`, and the merge stopped with the files
+your instruction lists in conflict. It is still in progress. Resolve each listed file so that both the
+change's intent and the base's survive, `git add` each one, then `git commit --no-edit` to finish the
+merge. Then report `resolved`. If a conflict cannot be resolved without a decision (both sides changed
+the same behaviour in ways that cannot both hold), ask the person in this conversation and wait.
+
+**The fix helper.** `pir` ran the tests after merging `{base}` in, and they failed; your instruction
+gives the reason and the log path. Make them pass without undoing the change or the merged base, and
+commit. Then report `fixed`. If they cannot be fixed within the change's scope, say why in the
+report's body and report `fixed` anyway: `pir` runs the tests itself, and if they still fail the run
+waits, red, for the person.
+
+**Reporting.** Drop the report as *Dropping a report* shows, with your role, `resolve` or `fix`, as
+the second argument and one of these headers:
+
+```
+[pir:v1 kind=resolved single={name}]
+[pir:v1 kind=fixed single={name}]
+```
+
+`{name}` is the run's name, the one in `pir/{name}`. A helper never reports `dropped`, and never
+`built` or `reviewed`. Before you report, the worktree is clean (`git status --porcelain` prints
+nothing) and, for `resolved`, no merge is in progress. After reporting, change nothing until pir's
+word arrives (*After you report*): a failed check names what to fix; otherwise `pir` closes your
+session.
 
 ## After you report
 
@@ -177,7 +220,8 @@ its own. The branch and whatever is committed on it stay.
 A report is one small file in the reports folder your opening instruction named. Drop it in one Bash
 command, with no intermediate file: the message goes over a quoted heredoc, and `node` writes it
 temp-then-rename so `pir` never reads a half-written file. The terminator `PIR_EOF` sits at the start
-of its line. The second argument is your role, `builder` or `reviewer`, recorded as `from`:
+of its line. The second argument is your role, `builder` or `reviewer` (a helper writes `resolve` or
+`fix` there), recorded as `from`:
 
 ```
 node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkdirSync(d,{recursive:true});const f=p.join(d,Date.now()+"-single-"+Math.random().toString(36).slice(2)+".json");const t=f+".tmp";fs.writeFileSync(t,JSON.stringify({from:process.argv[2],text:fs.readFileSync(0,"utf8")}));fs.renameSync(t,f)' "<reports folder>" "<builder or reviewer>" <<'PIR_EOF'
@@ -186,7 +230,8 @@ node -e 'const fs=require("fs"),p=require("path");const d=process.argv[1];fs.mkd
 PIR_EOF
 ```
 
-The first line is the header `pir` reads, exactly; the body is for the person. The three reports:
+The first line is the header `pir` reads, exactly; the body is for the person. The builder's and the
+reviewer's three reports (a helper's two are in *The helpers*):
 
 ```
 [pir:v1 kind=built single={name}]
