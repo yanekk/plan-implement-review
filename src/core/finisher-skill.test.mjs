@@ -192,3 +192,25 @@ test('after a restart mid-finish the skill does not ask for a status pir refuses
   }
   assert.match(restart, /ask the go question again/);
 });
+
+// single-finisher T02: the one finisher also finishes a single run (single-finisher DESIGN §2.7).
+test('the skill covers a single run: description, opening, both status folders', () => {
+  assert.match(frontmatter(SKILL).description, /parallel PIR build run with the coordinator agent, or a single run/);
+  assert.match(SKILL, /You are the \*\*finisher\*\* of a parallel PIR build run or a single run\./);
+  const opening = section(SKILL, 'Your opening instruction');
+  assert.ok(opening);
+  const statusLine = opening.split('\n- ').find((l) => l.includes('**status folder**'));
+  assert.ok(statusLine, 'a status-folder line');
+  assert.ok(statusLine.includes('`control/finisher/status/`'), 'names the build folder');
+  assert.ok(statusLine.includes('`.parallel/single/finisher/status/`'), "names a single run's folder");
+  assert.match(opening, /for a single run, in its place, \*\*Change\s+asked for\*\*/);
+});
+
+test('what to check: a build reads REPORT.md, a single run reads Change asked for and the git log', () => {
+  const check = section(SKILL, 'What to check');
+  assert.ok(check);
+  assert.match(check, /for a build, read `plans\/\{slug\}\/REPORT\.md`/);
+  assert.match(check, /For a single run, read the `Change asked for` file/);
+  assert.ok(check.includes('`git log --oneline <target>..pir/{slug}`'));
+  assert.match(check, /say in the summary what is being delivered/);
+});

@@ -179,6 +179,49 @@ test('fence: Write only into the status folder and the pir-finisher skill while 
   assert.deepEqual(v, { w1: 'allow', w2: 'deny', s1: 'allow', s2: 'deny', r1: 'allow', r2: 'deny', b1: 'allow' });
 });
 
+// ---- A single run's finisher (single-finisher DESIGN §2.7) ----
+
+// A single run's control folder is plans/{name}/.parallel/single/, so its status folder sits under it.
+function singleOpts(s) {
+  const controlDir = join(s.repoRoot, 'plans', 'demo', '.parallel', 'single');
+  mkdirSync(controlDir, { recursive: true });
+  return { kind: 'single', controlDir, reportPath: null, promptPath: join(controlDir, 'prompt.md') };
+}
+
+test('single: starts with the single opening and the single session name; no Report line', async (t) => {
+  const s = scratch(t);
+  const opts = singleOpts(s);
+  const { fin, calls } = start(s, [{ await: 'user' }], t, opts);
+  assert.equal(calls[0].name, 'repo / demo / single / finisher');
+  assert.equal(calls[0].hooks, FINISHER_HOOKS, 'the same fence as a build');
+  assert.deepEqual(calls[0].tools, FINISHER_TOOLS);
+  const text = told(fin)[0];
+  assert.match(text, /^Invoke the pir-finisher skill and follow it\. You are the finisher of the single run `demo`/);
+  assert.ok(text.includes(`Change asked for: ${opts.promptPath}`));
+  assert.ok(text.includes(`Status folder: ${join(opts.controlDir, 'finisher', 'status')}`));
+  assert.doesNotMatch(text, /^Report:/m);
+  assert.doesNotMatch(text, /^Plan:/m);
+  assert.doesNotMatch(text, /null/);
+  assert.equal(fin.logPath, join(opts.controlDir, 'conversations', 'finisher-1.ndjson'));
+});
+
+test('single: in preparing a git merge is refused and a git log allowed, exactly as for a build', async (t) => {
+  for (const kind of ['build', 'single']) {
+    const s = scratch(t);
+    const opts = kind === 'single' ? singleOpts(s) : {};
+    const { fin } = start(s, [
+      { await: 'user' },
+      { tool: { id: 'm1', name: 'Bash', input: { command: 'git merge pir/demo' }, allowRuled: true } },
+      { tool: { id: 'l1', name: 'Bash', input: { command: 'git log --oneline dev..pir/demo' } } },
+      { await: 'user' },
+    ], t, opts);
+    await waitFor(() => gateNotes(fin).length === 2, `${kind}: two verdicts`);
+    const v = Object.fromEntries(gateNotes(fin).map((n) => [n.requestId, n.verdict]));
+    assert.deepEqual(v, { m1: 'deny', l1: 'allow' }, kind);
+    assert.equal(fin.phase(), 'preparing', kind);
+  }
+});
+
 // ---- Status files (DESIGN §2.6) ----
 
 test('status: ready → awaiting-go with a ledger line and state.json; malformed retried once then refused', async (t) => {
