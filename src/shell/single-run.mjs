@@ -10,13 +10,18 @@
 // in order. It decides nothing itself: every branch below is either an action of decideSingleStep or the
 // plumbing that feeds it facts.
 //
+// After a green review the run does not exit (single-finisher DESIGN §2.2–§2.10): it prepares the base,
+// merges it into the branch, holds a resolve or fix helper if the merge clashes or the tests turn red,
+// then starts the finisher (finisher-agent.mjs, kind 'single') and keeps running through the wait,
+// watching the base, until the finisher writes `done` or `close`, the person merges by hand, or a stop.
+//
 // `--resume` (§2.11) reads state.json, removes a leftover baseline worktree, finishes a half-done
 // rename, and then either reopens the current step's last session by id or starts again the command run
 // the last program died in.
 //
 // Phone alerts (§2.10) go through the build's machinery: each loop turn the asking session becomes a view
-// for core/notify's episode machine, whose sends and clears coordinate.mjs's runner publishes; one more
-// alert when the run finishes `ready`. With no ~/.pir/notify.json nothing is sent.
+// for core/notify's episode machine, whose sends and clears coordinate.mjs's runner publishes. The end
+// sequence's alerts are single-finisher T06's. With no ~/.pir/notify.json nothing is sent.
 //
 // Under PIR_RUN=1 (set only by the launcher) it writes status.json on every change of what the screen
 // would show, and the final status to the snapshot and the index entry, as plan-run.mjs does. Without it
@@ -24,13 +29,19 @@
 
 import { spawn as spawnLine } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { alertText, newNotifyState, notifyExit, notifyStep, singleEndAlert } from '../core/notify.mjs';
+import { fileURLToPath } from 'node:url';
+import { holdText } from '../core/basebranch.mjs';
+import { baseWatchVerdict, watchDue } from '../core/basewatch.mjs';
+import { chooseRules } from '../core/finisher-policy.mjs';
+import { alertText, newNotifyState, notifyExit, notifyStep } from '../core/notify.mjs';
 import { resumeInstruction } from '../core/planflow.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import {
   builderInstruction,
   decideSingleStep,
+  helperInstruction,
   isValidSingleName,
   parseSingleReport,
   reviewerInstruction,
@@ -38,8 +49,12 @@ import {
 } from '../core/singleflow.mjs';
 import { workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
+import { prepareBase as prepareBaseReal } from './base-branch.mjs';
 import { startLines as startLinesReal } from './commands.mjs';
-import { NOTIFY_EXIT_WAIT_MS, endAlertAction, newNotifyTrack, runNotifyActions, withinMs } from './coordinate.mjs';
+import { NOTIFY_EXIT_WAIT_MS, baseWatchMs, newNotifyTrack, readAskRules, runNotifyActions, withinMs } from './coordinate.mjs';
+import { readJson, withAgent } from './coordinator-agent.mjs';
+import { startFinisher as startFinisherReal } from './finisher-agent.mjs';
+import { startWorker as startWorkerReal } from './worker-proc.mjs';
 import { drainDropFolder } from './drop-folder.mjs';
 import { isAlive as isAliveReal, isSameProcess, startTimeOf as startTimeOfReal } from './identity.mjs';
 import { STOP_CLOSE, createSessionHolder, sessionAsking, trackStoppedAt } from './held-session.mjs';
@@ -51,20 +66,31 @@ import { lastAssistantText, resolveClaudePath } from './platform.mjs';
 import { reapRecorded } from './reap.mjs';
 import { writeSnapshot as writeSnapshotReal } from './snapshot-store.mjs';
 import {
+  abortSync as abortSyncReal,
+  baseContains as baseContainsReal,
+  baseTip as baseTipReal,
   git as gitReal,
   openBaseline as openBaselineReal,
   removeBaseline as removeBaselineReal,
   renamePlanBranch as renamePlanBranchReal,
   slugTaken as slugTakenReal,
+  syncBase as syncBaseReal,
+  syncPending as syncPendingReal,
 } from './worktree.mjs';
+
+// The engine's root, where the finisher's built-in rules file lives (chooseRules' last resort).
+const ENGINE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // The wait between loop turns when nothing wakes it. A report, a person's input, any entry in the
 // session's log and a command run settling wake it at once; this is the backstop for a missed event.
 const POLL_MS = 5000;
 
-const STEPS = ['build', 'review'];
-const STEP_KINDS = { build: ['built', 'dropped'], review: ['reviewed', 'dropped'] };
-const ROLE = { build: 'builder', review: 'reviewer' };
+// Every step a held session belongs to: the builder, the reviewer and the two sync helpers
+// (single-finisher DESIGN §2.3). WORK_STEPS are the two the PROGRESS cell and the step times count.
+const STEPS = ['build', 'review', 'resolve', 'fix'];
+const WORK_STEPS = ['build', 'review'];
+const STEP_KINDS = { build: ['built', 'dropped'], review: ['reviewed', 'dropped'], resolve: ['resolved'], fix: ['fixed'] };
+const ROLE = { build: 'builder', review: 'reviewer', resolve: 'resolve', fix: 'fix' };
 // The command runs a test run's result is read for (§2.9): the session waits on pir, not the person.
 const TESTING = new Set(['tests', 'baseline']);
 
@@ -124,7 +150,7 @@ export function formatSingleSetupNote({ reason, tail, logPath }, { setup = [] } 
 // against git (§2.7). Every failure is one plain line naming what failed and what to do; they are sent
 // to the session as they are. `run` is the run's state ({ id, name, base }), `startSha` its starting
 // commit. pir never commits for a session, so a dirty tree is the session's to commit.
-export function singleChecks({ kind, name, run, worktree, root, repo, indexDir, startSha, git = gitReal, slugTaken = slugTakenReal }) {
+export function singleChecks({ kind, name, run, worktree, root, repo, indexDir, startSha, git = gitReal, slugTaken = slugTakenReal, syncPending = syncPendingReal }) {
   const again = `drop the \`${kind}\` report again`;
   const failures = [];
   if (kind === 'built') {
@@ -153,8 +179,12 @@ export function singleChecks({ kind, name, run, worktree, root, repo, indexDir, 
     if (!count.ok || Number(count.stdout.trim()) < 1) {
       failures.push(`nothing is committed on the branch yet. Commit the change, then ${again}.`);
     }
-  } else if (kind === 'reviewed') {
-    if (name !== run.name) failures.push(`This run is pir/${run.name}, not pir/${name}. Drop the \`reviewed\` report with single=${run.name}.`);
+  } else if (kind === 'reviewed' || kind === 'resolved' || kind === 'fixed') {
+    if (name !== run.name) failures.push(`This run is pir/${run.name}, not pir/${name}. Drop the \`${kind}\` report with single=${run.name}.`);
+    // A `resolved` merge must be committed: a merge still in progress is not one (single-finisher §2.3).
+    if (kind === 'resolved' && syncPending(worktree)) {
+      failures.push(`The merge is still in progress. Resolve every clashing file, commit the merge, then ${again}.`);
+    }
   } else {
     failures.push(`a \`${kind}\` report has no checks`);
   }
@@ -181,13 +211,16 @@ const askingState = (state, running) => ({ accepted: state.accepted ?? state.pen
 // included), 'testing' while pir's tests or the baseline run, 'asking' while its live session asks the
 // person, 'done', 'failed' for the step a `dropped` report ended, 'pending' before it starts. A pending
 // request reads asking even during a test run; only the stopped-session rule is switched off then (§2.9).
-// The `merge` row is 'ready' once the run is, else 'pending'; whether the person has merged is the
-// dashboard's to find out (§2.8).
-export function singleRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {}, running = null } = {}) {
+// The `merge` row is 'ready' once a legacy run ended `ready`, else 'pending'; whether the person has
+// merged is the dashboard's to find out (§2.8). In `sync` and `wait` both work steps are done. The end
+// sequence's own rows are T07's: the snapshot carries `end` (state.end) and `finisher` (the finisher's
+// view(), or null) for them (single-finisher DESIGN §2.11).
+export function singleRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {}, running = null, finisher = null } = {}) {
   const runningKind = running?.kind ?? state.running ?? null;
   const testing = state.outcome == null && TESTING.has(runningKind);
   // A finished run keeps the step it ended in (singleflow), so a drop is charged to that step.
   const inReview = state.step === 'review' || state.step === 'rename';
+  const pastReview = state.step === 'sync' || state.step === 'wait';
   const stepRow = (id) => {
     const mine = sessions.filter((s) => s.step === id);
     const live = mine.filter((s) => s.live).at(-1) ?? null;
@@ -196,10 +229,10 @@ export function singleRunState(state, { label = null, sessions = [], since = {},
     const asking = current ? sessionAsking(askingState(state, runningKind), live) : null;
     let phase;
     if (id === 'build') {
-      if (inReview) phase = 'done';
+      if (inReview || pastReview) phase = 'done';
       else if (state.outcome === 'dropped') phase = 'failed';
       else phase = asking ? 'asking' : testing ? 'testing' : 'building';
-    } else if (state.outcome === 'ready') phase = 'done';
+    } else if (state.outcome === 'ready' || pastReview) phase = 'done';
     else if (!inReview) phase = 'pending';
     else if (state.outcome === 'dropped') phase = 'failed';
     else if (state.step === 'review') phase = asking ? 'asking' : testing ? 'testing' : 'reviewing';
@@ -231,6 +264,8 @@ export function singleRunState(state, { label = null, sessions = [], since = {},
       stepRow('review'),
       { id: 'merge', phase: state.outcome === 'ready' ? 'ready' : 'pending', since: null, stoppedAt: null, tookMs: null, asking: null, worker: null, workers: [] },
     ],
+    end: state.end ?? null,
+    finisher,
   };
 }
 
@@ -257,9 +292,10 @@ export function singleNotifyViews(runState, sessions = [], { id = null, remoteOn
   return views;
 }
 
-// nextTestsLogPath(controlDir) → tests-{n}.log, n one past the highest there (§3.5), counted from the
-// folder so a resumed program never overwrites the log a message already named.
-export function nextTestsLogPath(controlDir, { readdir = readdirSync } = {}) {
+// nextTestsLogPath(controlDir, { sync }) → tests-{n}.log, or sync-tests-{n}.log for a run of the end
+// sequence (single-finisher DESIGN §3.4), n one past the highest of either kind there (§3.5), counted from
+// the folder so a resumed program never overwrites the log a message already named.
+export function nextTestsLogPath(controlDir, { readdir = readdirSync, sync = false } = {}) {
   let names = [];
   try {
     names = readdir(controlDir);
@@ -268,10 +304,10 @@ export function nextTestsLogPath(controlDir, { readdir = readdirSync } = {}) {
   }
   let max = 0;
   for (const n of names) {
-    const m = /^tests-(\d+)\.log$/.exec(n);
+    const m = /^(?:sync-)?tests-(\d+)\.log$/.exec(n);
     if (m) max = Math.max(max, Number(m[1]));
   }
-  return join(controlDir, `tests-${max + 1}.log`);
+  return join(controlDir, `${sync ? 'sync-' : ''}tests-${max + 1}.log`);
 }
 
 // The command line in flight is recorded in <control>/command.json as { kind, pid, startTime }. Each
@@ -313,7 +349,10 @@ export function reapCommand(controlDir, { kill = process.kill, isAlive = isAlive
 //   env, now, log, signal (an AbortSignal: a stop), claudePath, startWorker, startTimeOf, reap, git,
 //   slugTaken, renamePlanBranch, writeSnapshot, updateRecord, watch, uuid, pollMs
 // plus startLines (commands.mjs), openBaseline, removeBaseline (worktree.mjs), and ntfyPublish, ntfyClear
-// (ntfy.mjs), which a test replaces so no alert reaches the network.
+// (ntfy.mjs), which a test replaces so no alert reaches the network. The end sequence's (single-finisher
+// DESIGN §2.2–§2.10): prepareBase (base-branch.mjs), syncBase, abortSync, syncPending, baseContains,
+// baseTip (worktree.mjs), startFinisher (finisher-agent.mjs; a test injects a throw), watchMs (how often
+// the wait fetches the remote, baseWatchMs by default) and home (the finisher's rules lookup).
 export async function runSingle({ controlDir: givenControlDir, resume = false, deps = {} }) {
   const {
     env = process.env,
@@ -333,6 +372,15 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     pollMs = POLL_MS,
     ntfyPublish = ntfyPublishReal,
     ntfyClear = ntfyClearReal,
+    prepareBase = prepareBaseReal,
+    syncBase = syncBaseReal,
+    abortSync = abortSyncReal,
+    syncPending = syncPendingReal,
+    baseContains = baseContainsReal,
+    baseTip = baseTipReal,
+    startFinisher = startFinisherReal,
+    watchMs = baseWatchMs(env),
+    home = homedir(),
   } = deps;
 
   // Every path below is re-pointed when the control folder moves at the rename (§2.4 step 4).
@@ -426,10 +474,21 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     taskLabel: 'single',
     roleOf: (step) => ROLE[step],
     nameOf: (step) => singleSessionName({ repo, run: indexKey(), step }),
-    instructionOf: (step) =>
-      step === 'build'
-        ? builderInstruction({ reportsDir, base: state.base, baseSha: state.baseSha, prompt, setupNote })
-        : reviewerInstruction({ reportsDir, name: state.name, base: state.base, baseSha: state.baseSha, prompt }),
+    instructionOf: (step) => {
+      if (step === 'build') return builderInstruction({ reportsDir, base: state.base, baseSha: state.baseSha, prompt, setupNote });
+      if (step === 'review') return reviewerInstruction({ reportsDir, name: state.name, base: state.base, baseSha: state.baseSha, prompt });
+      // A sync helper (single-finisher DESIGN §2.3): the clashing files, or the red run's reason and log.
+      const e = state.end ?? {};
+      return helperInstruction({
+        role: step,
+        name: state.name,
+        base: state.base,
+        reportsDir,
+        files: e.sync?.files ?? [],
+        testsReason: e.testsReason?.reason ?? null,
+        logPath: e.testsReason?.logPath ?? null,
+      });
+    },
     remote,
     // Read at each spawn, so a `pir notify` during the run reaches the reviewer (§2.10).
     env: () => workerEnv(env),
@@ -441,7 +500,23 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     ...(deps.startTimeOf ? { startTimeOf: deps.startTimeOf } : {}),
   });
   holder.load(state.sessions, STEPS);
-  const { platform, waker, grants, since } = holder;
+  const { waker, grants, since } = holder;
+  // The finisher this program holds (single-finisher DESIGN §2.7), or null. The person's answers reach it
+  // through the inbox's platform, wrapped as the build wraps its own with the coordinator agent: the go is
+  // recognised only as an answer logged `from: 'person'` in the finisher's own conversation.
+  let finisher = null;
+  let finisherFailed = false;
+  const platform = withAgent(holder.platform, () => finisher);
+  // Awaited, so the program never exits with the finisher's process behind it; with the stop's short
+  // grace, since every close here ends the finisher for good (the run ends, or it falls back) and a
+  // finisher still asking the go would otherwise hold the end for the worker's full five seconds.
+  const closeFinisher = async (opts = STOP_CLOSE) => {
+    const f = finisher;
+    finisher = null;
+    if (!f) return;
+    await f.close(opts).catch(() => {});
+    log('finisher closed');
+  };
   const stoppedAt = {};
   const took = {};
 
@@ -500,7 +575,8 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     if (kind === 'setup') {
       command = startRun(kind, { setup, test: [], cwd: worktreeNow(), logPath: join(controlDir, 'setup.log') });
     } else if (kind === 'tests') {
-      command = startRun(kind, { setup, test, cwd: worktreeNow(), logPath: nextTestsLogPath(controlDir) });
+      const logPath = nextTestsLogPath(controlDir, { sync: state.step === 'sync' });
+      command = startRun(kind, { setup, test, cwd: worktreeNow(), logPath });
     } else {
       // The baseline (§2.5): the same pair at the starting commit, in a throwaway worktree. One that
       // cannot be made is a result too: the message then says the starting point could not be tested.
@@ -551,6 +627,8 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
   };
   const stepFinished = (step) => {
     const inReview = state.step === 'review' || state.step === 'rename';
+    const pastReview = state.step === 'sync' || state.step === 'wait';
+    if (pastReview) return true;
     if (state.outcome !== null) return step === 'build' || inReview;
     return step === 'build' && inReview;
   };
@@ -559,12 +637,18 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     const running = command ? { kind: command.kind, since: command.since } : null;
     trackStoppedAt(askingState(state, running?.kind ?? state.running), views, stoppedAt, now);
     // A finished step's time, read once from its logs when none of its sessions is live any more.
-    for (const step of STEPS) {
+    for (const step of WORK_STEPS) {
       if (step in took || holder.sessions.some((x) => x.step === step && x.live)) continue;
       if (stepFinished(step)) took[step] = holder.workedMs(step);
     }
     // The label names the run only until it has a name (the index rename clears it there).
-    return singleRunState(state, { label: state.name && state.renamed?.index ? null : label, sessions: views, since, stoppedAt, took, running });
+    let fin = null;
+    try {
+      fin = finisher?.view() ?? null;
+    } catch {
+      fin = null;
+    }
+    return singleRunState(state, { label: state.name && state.renamed?.index ? null : label, sessions: views, since, stoppedAt, took, running, finisher: fin });
   };
   const branchNow = () => (state.name && branchExists(`pir/${state.name}`) ? `pir/${state.name}` : `pir/${state.id}`);
   let lastPainted = null;
@@ -695,6 +779,87 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     }
   };
 
+  // ---- The end sequence (single-finisher DESIGN §2.2–§2.10): what the decision is told of the base,
+  // the sync and the finisher, and the effects of its end actions. ----
+  // The result of a `prepareBase` or `syncBase` action, handed to the decision on the next pass.
+  let baseFact = null;
+  let syncFact = null;
+  // The wait's remote-refresh clock (watchDue); null outside the wait, so each wait starts it afresh.
+  let watchFrom = null;
+  const baseRef = () => `refs/heads/${state.base}`;
+  const trackingRef = (remote = state.end?.remote) => (remote ? `refs/remotes/${remote}/${state.base}` : null);
+  // A throw is held like an unreachable remote, as prepareRunBase does for builds.
+  const prepare = (mode) => {
+    try {
+      return prepareBase(root, state.base, { mode });
+    } catch (err) {
+      return { ok: false, reason: 'fetch-failed', remote: state.end?.remote ?? null, error: String(err?.message ?? err) };
+    }
+  };
+  // tipHeld(extra) → whether the local base, its remote-tracking copy or any `extra` commit holds the
+  // run's branch tip: the person (or the finisher) merged it.
+  const tipHeld = (extra = [], remote) =>
+    baseContains(branchNow(), { root, refs: [baseRef(), trackingRef(remote), ...extra].filter(Boolean) });
+  // One look at the base in the wait (§2.9), the build's watchBase: the local base every pass, the remote
+  // every watchMs.
+  const watchNow = () => {
+    const due = watchDue({ now: now(), watchFrom, watchMs });
+    watchFrom = due.watchFrom;
+    const watched = due.due ? prepare('watch') : null;
+    if (watched && !watched.ok) log(`base watch: ${holdText(watched, { base: state.base, remote: state.end?.remote })}`);
+    const containsTip = tipHeld([], watched?.remote ?? state.end?.remote);
+    const localTip = containsTip ? null : baseTip({ root, ref: baseRef() });
+    return baseWatchVerdict({ containsTip, localTip, localSeen: state.end?.localSeen ?? null, watched, baseSha: state.end?.sync?.baseSha ?? null });
+  };
+  // The finisher fact (§3.3). Only the wait drains its statuses: during a re-sync a status waits for the
+  // wait, as the build's finisherWaiting is the only pass that drains. A finisher not held reads its
+  // stored phase, so a resume finds a run whose finisher had already written `done`.
+  const finisherFact = (draining) => {
+    if (!finisher) {
+      return { started: false, phase: readJson(join(controlDir, 'finisher', 'state.json'))?.phase ?? null, goGiven: false, givenUp: false, failed: finisherFailed, accepted: [] };
+    }
+    const givenUp = finisher.givenUp();
+    const out = draining && !givenUp ? finisher.drain() : { accepted: [], refused: [], go: null };
+    for (const st of out.accepted) log(`finisher status: ${st.kind}`);
+    for (const r of out.refused ?? []) log(`finisher status ${r.file} refused: ${r.why}`);
+    if (out.go) log(`go given (${out.go.by})`);
+    return { started: true, phase: finisher.phase(), goGiven: finisher.goGiven(), givenUp, failed: false, accepted: out.accepted.map((st) => ({ kind: st.kind })) };
+  };
+  // startTheFinisher() → start it, or resume it by id when its session.json is there (§2.7, §2.10). A throw
+  // is the fallback's `failed`, told to the decision on the next pass.
+  const startTheFinisher = () => {
+    if (finisher) return;
+    const worktree = worktreeNow();
+    try {
+      const rules = chooseRules({ featurePath: worktree, home, repo: root, engineDir: ENGINE_DIR, exists: existsSync });
+      log(`finisher rules: ${rules.path} (${rules.source})`);
+      const resumed = existsSync(join(controlDir, 'finisher', 'session.json'));
+      finisher = startFinisher({
+        kind: 'single',
+        controlDir,
+        featurePath: worktree,
+        repoRoot: root,
+        mainCheckout: root,
+        slug: state.name,
+        base: state.base,
+        rules,
+        reportPath: null,
+        promptPath: join(controlDir, 'prompt.md'),
+        askRules: readAskRules(worktree),
+        startWorker: deps.startWorker ?? startWorkerReal,
+        claudePath,
+        remote,
+        now,
+        env: () => workerEnv(env),
+      });
+      log(resumed ? 'finisher resumed' : 'finisher started');
+    } catch (err) {
+      finisher = null;
+      finisherFailed = true;
+      log(`finisher failed to start: ${err?.message ?? err}`);
+    }
+  };
+
   // ---- The loop. ----
   let first = true;
   // The answer to the last `check` action, handed to the decision on the next turn.
@@ -710,7 +875,8 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
         // The clears go out while the session closes: the close may take the whole 4 s.
         const cleared = notifyExitNow();
         killCommand();
-        await holder.closeCurrent(STOP_CLOSE);
+        // The finisher is not in workers.json (as in builds): only this program closes it (§2.13).
+        await Promise.all([holder.closeCurrent(STOP_CLOSE), closeFinisher()]);
         await cleared;
         paint('stopped');
         log('stopped');
@@ -746,6 +912,23 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       };
       checked = null;
       if (isResume || state.step === 'rename') facts.renamed = renamedOnDisk();
+      if (state.step !== 'wait') watchFrom = null;
+      if (state.outcome === null && (state.step === 'sync' || state.step === 'wait')) {
+        facts.now = now();
+        facts.syncPending = syncPending(worktreeNow());
+        facts.base = baseFact;
+        facts.sync = syncFact;
+        baseFact = null;
+        syncFact = null;
+        facts.finisher = finisherFact(state.step === 'wait');
+        if (state.step === 'sync' && state.end?.phase === 'prepare') {
+          // At the sync's prepare, a tip the base (or the commit just prepared) holds was merged by hand.
+          facts.watch = tipHeld(facts.base?.ok && facts.base.sha ? [facts.base.sha] : []) ? 'merged' : null;
+        } else if (state.step === 'wait' && !(facts.finisher.started && facts.finisher.goGiven)) {
+          // After a go the finisher's own merge moves the base: only its done or close end the run.
+          facts.watch = watchNow();
+        } else facts.watch = null;
+      }
 
       // The decision closes a step on a green result for the head it recorded. A session that commits or
       // edits after that result without reporting is seen here, at the idle gate: its accepted claim is
@@ -754,6 +937,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       const kinds = STEP_KINDS[state.step] ?? [];
       const acc = state.accepted;
       if (
+        (state.step === 'build' || state.step === 'review') &&
         acc && acc.kind !== 'dropped' && !state.pending && !state.running && !done && facts.checks === null &&
         !reports.some((r) => kinds.includes(r.kind)) &&
         state.tested?.ok === true && state.tested.head === acc.head && (idle || !current?.live)
@@ -819,7 +1003,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
           again = true;
         } else if (a.type === 'check') {
           const worktree = worktreeNow();
-          const checks = singleChecks({ kind: a.kind, name: a.name, run: state, worktree, root, repo, indexDir, startSha: state.baseSha, git, slugTaken });
+          const checks = singleChecks({ kind: a.kind, name: a.name, run: state, worktree, root, repo, indexDir, startSha: state.baseSha, git, slugTaken, syncPending });
           const head = git(worktree, ['rev-parse', 'HEAD']);
           checked = { checks, head: head.ok ? head.stdout.trim() : null };
           log(`checks for ${a.kind} ${a.name}: ${checks.ok ? 'ok' : checks.failures.join(' | ')}`);
@@ -828,15 +1012,41 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
           if (!holder.current()?.worker.send(a.text, { from: 'pir' })) log('a message to the session was not delivered');
         } else if (a.type === 'closeWhenIdle') {
           await holder.closeCurrent();
+        } else if (a.type === 'prepareBase') {
+          const r = prepare(a.mode);
+          baseFact = { ...r, text: r.ok ? null : holdText(r, { base: state.base, remote: state.end?.remote }), localTip: baseTip({ root, ref: baseRef() }) };
+          log(r.ok ? `base ${state.base} prepared at ${String(r.sha).slice(0, 7)}` : `base ${state.base} held: ${baseFact.text}${r.error ? ` (${r.error})` : ''}`);
+          again = true;
+        } else if (a.type === 'syncBase') {
+          try {
+            syncFact = syncBase(worktreeNow(), { baseSha: a.baseSha, base: state.base });
+          } catch (err) {
+            // git refused before merging (an untracked file in the way): nothing is left in progress.
+            syncFact = { state: 'error', baseSha: a.baseSha, files: [], error: String(err?.message ?? err) };
+          }
+          log(`sync ${state.base} into ${branchNow()}: ${syncFact.state}${syncFact.files?.length ? ` (${syncFact.files.join(', ')})` : ''}${syncFact.error ? `: ${syncFact.error}` : ''}`);
+          again = true;
+        } else if (a.type === 'abortSync') {
+          const r = abortSync(worktreeNow());
+          log(r.ok ? 'the merge left in progress was aborted' : 'the merge left in progress could not be aborted');
+        } else if (a.type === 'startFinisher') {
+          startTheFinisher();
+          again = true;
+        } else if (a.type === 'finisherResyncing') {
+          if (finisher?.resyncing()) log('finisher told the base moved: no go counts until the re-sync settles');
+        } else if (a.type === 'finisherResynced') {
+          if (finisher?.resynced(a.baseSha)) log(`finisher re-synced to ${String(a.baseSha ?? '').slice(0, 7)}`);
+        } else if (a.type === 'closeFinisher') {
+          await closeFinisher();
         } else if (a.type === 'finish') {
           // A `dropped` can land while pir's tests run; nobody will read their result.
           killCommand();
+          await closeFinisher();
           recordFinal('finished');
           log(`finished: ${a.outcome}`);
-          // The one end alert (§2.10): only `ready`. It is sent here and nowhere else, so a `--resume` of a
-          // finished run, which takes the nothing-to-resume exit above, never sends it again.
-          const alert = a.outcome === 'ready' ? singleEndAlert({ name: state.name, base: state.base }) : null;
-          await notifyExitNow(alert ? runNotify([endAlertAction(alert)]) : null);
+          // The end alerts of the new ending are T06's (single-finisher DESIGN §2.12); a `--resume` of a
+          // finished run takes the nothing-to-resume exit above and sends nothing.
+          await notifyExitNow();
           return 0;
         } else if (a.type === 'exitCrashed') {
           paint();
@@ -853,14 +1063,23 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       paint(null, rs);
       alertPass(rs);
       if (again) continue;
-      await waker.wait([reportsDir, personInbox.inboxDir], pollMs, { watch, signal, unref: true });
+      // A finisher's status or a line of its conversation (a go) wakes the pass: startFinisher has no
+      // activity hook of its own.
+      const finisherPaths = finisher ? [join(controlDir, 'finisher', 'status'), finisher.logPath].filter(Boolean) : [];
+      // The wait is unref'd while a session or a command run keeps the process alive. A red or fallback
+      // wait, or a held sync, has neither, and an unref'd wait there would let the program end mid-run with
+      // nothing recorded. The finisher never counts: its process can exit while this wait is pending (given
+      // up, onExit wakes nothing), and an unref'd wait would then let the program drain away silently.
+      const held = !!(holder.current()?.live || command);
+      await waker.wait([reportsDir, personInbox.inboxDir, ...finisherPaths], pollMs, { watch, signal, unref: held });
     }
   } catch (err) {
     log(`error: ${err?.stack ?? err}`);
-    await holder.closeCurrent(STOP_CLOSE);
+    await Promise.all([holder.closeCurrent(STOP_CLOSE), closeFinisher()]);
     return 1;
   } finally {
     killCommand();
+    await closeFinisher();
     personInbox.stopAll('session-closed');
     personInbox.stop();
     await notifyExitNow();

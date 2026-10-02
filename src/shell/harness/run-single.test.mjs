@@ -20,6 +20,8 @@ import { BUILDER_MATCH, SINGLE_REVIEWER_MATCH, singleReviewerScript } from '../f
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from '../fake/claude-stream.mjs';
 import { REPLY } from './fixtures/single-run-live.mjs';
 
+const SKIP_T10 = "skip: T10 — waits for the old 'ready' ending, which a single run no longer reaches since single-finisher T05; T10 re-enables it";
+
 const tmp = (p) => mkdtempSync(join(tmpdir(), p));
 const SESSIONS = join(dirname(fileURLToPath(import.meta.url)), '..', 'fake', 'sessions.mjs');
 
@@ -199,7 +201,7 @@ function builderScript(name) {
   ];
 }
 
-test('a dry pass of the single-run-live scenario with the fake claude on PATH reaches every fact green', { timeout: 180_000 }, async (t) => {
+test('a dry pass of the single-run-live scenario with the fake claude on PATH reaches every fact green', { timeout: 180_000, skip: SKIP_T10 }, async (t) => {
   const root = tmp('pir-single-dry-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home');

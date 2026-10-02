@@ -505,15 +505,15 @@ test('rounds are counted per step: the review starts at 0', () => {
 
 // --- review (DESIGN §2.4 steps 5–6) -------------------------------------------------------------
 
-test('reviewed → check → tests → green → close → finish ready', () => {
+test('reviewed → check → tests → green → close → the sync starts', () => {
   const asked = decideSingleStep(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE });
   assert.deepEqual(asked.actions, [{ type: 'check', kind: 'reviewed', name: 'fix-typo' }]);
   const testing = decideSingleStep(asked.state, { checks: PASS, head: H2, renamed: ALL_DONE });
   assert.deepEqual(testing.actions, [{ type: 'runTests', head: H2 }]);
   const r = decideSingleStep(testing.state, { commandDone: green(H2), idle: true, renamed: ALL_DONE });
-  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'finish', outcome: 'ready' }]);
-  assert.equal(r.state.outcome, 'ready');
-  assert.equal(r.state.step, 'review');
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.outcome, null);
+  assert.equal(r.state.step, 'sync');
   assert.equal(r.state.live, false);
   assert.equal(r.state.accepted, null);
 });
@@ -521,8 +521,8 @@ test('reviewed → check → tests → green → close → finish ready', () => 
 test('reviewed at the head the build tested green → no second test run', () => {
   const asked = decideSingleStep(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE });
   const r = decideSingleStep(asked.state, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE });
-  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'finish', outcome: 'ready' }]);
-  assert.equal(r.state.outcome, 'ready');
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.step, 'sync');
 });
 
 test('a failed reviewed check goes to the reviewer', () => {
@@ -534,7 +534,7 @@ test('a failed reviewed check goes to the reviewer', () => {
 
 test('a finished run decides nothing more, resume included', () => {
   const asked = decideSingleStep(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE });
-  const done = decideSingleStep(asked.state, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE }).state;
+  const done = { ...decideSingleStep(asked.state, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE }).state, outcome: 'finished' };
   assert.deepEqual(decideSingleStep(done, { resume: true, renamed: ALL_DONE }).actions, []);
   assert.deepEqual(decideSingleStep(done, { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }] }).actions, []);
 });
@@ -735,9 +735,9 @@ test('a whole run: setup, build, one red, green, rename, review, ready', () => {
   step({ checks: PASS, head: H2, idle: true, renamed: ALL_DONE });
   assert.deepEqual(log, [
     'runSetup', 'spawn', 'check', 'runTests', 'runBaseline', 'send', 'check', 'runTests',
-    'closeWhenIdle', 'rename', 'rename', 'rename', 'rename', 'spawn', 'check', 'closeWhenIdle', 'finish',
+    'closeWhenIdle', 'rename', 'rename', 'rename', 'rename', 'spawn', 'check', 'closeWhenIdle', 'prepareBase',
   ]);
-  assert.equal(s.outcome, 'ready');
+  assert.equal(s.step, 'sync');
   assert.deepEqual(s.sessions, { build: ['b1'], review: ['r1'], resolve: [], fix: [] });
   assert.deepEqual(s.rounds, { build: 1, review: 0 });
 });
@@ -767,8 +767,7 @@ test('singleProgress: a red round shows after the step\'s tests', () => {
 
 // --- the end sequence (single-finisher DESIGN §2.2–§2.10, T03) ----------------------------------
 
-const END = { endSequence: true };
-const dE = (s, f = {}) => decideSingleStep(s, f, END);
+const dE = (s, f = {}) => decideSingleStep(s, f);
 const BSHA = 'c'.repeat(40);
 const BSHA2 = 'd'.repeat(40);
 const LOCAL = 'e'.repeat(40);
@@ -795,12 +794,6 @@ function syncTesting(from = merging()) {
 }
 const sGreen = () => ({ kind: 'tests', ok: true, half: null, reason: null, logPath: '/c/sync-tests-2.log', tail: '', head: H2, clean: true });
 const sRed = () => ({ kind: 'tests', ok: false, half: 'test', reason: 'test `npm test` exited 1', logPath: '/c/sync-tests-2.log', tail: '', head: H2, clean: true });
-
-test('without endSequence a green review still finishes ready', () => {
-  const s = decideSingleStep(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE }).state;
-  const r = decideSingleStep(s, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE });
-  assert.deepEqual(r.actions.at(-1), { type: 'finish', outcome: 'ready' });
-});
 
 test('review accepted head green, idle → close the reviewer, sync, prepareBase start; no finish', () => {
   const r = reviewedGreen();

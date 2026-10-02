@@ -13,13 +13,23 @@ import { resumeInstruction } from '../core/planflow.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import { builderInstruction, initialSingleState, leftoverMessage, reviewerInstruction } from '../core/singleflow.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
+import {
+  FINISHER_GO_QUESTION,
+  SINGLE_FINISHER_MATCH,
+  SINGLE_FIX_MATCH,
+  SINGLE_RESOLVE_MATCH,
+  singleFinisherScript,
+  singleFixScript,
+  singleResolveScript,
+} from './fake/sessions.mjs';
 import { initEvent, assistantText, resultEvent } from './fake/claude-stream.mjs';
 import { startTimeOf } from './identity.mjs';
 import { recordPath, writeRecord } from './index-store.mjs';
 import { notifyPaths, writeNotifyConfig } from './notify-config.mjs';
 import { dropPersonInput } from './person-inbox.mjs';
 import { readSnapshot } from './snapshot-store.mjs';
-import { git, openBaseline, openPlanBranch } from './worktree.mjs';
+import { git, openBaseline, openPlanBranch, syncBase as syncBaseReal, syncPending as syncPendingReal } from './worktree.mjs';
+import { canResume } from '../core/dashboard.mjs';
 import {
   commandFileOf,
   findControlDir,
@@ -116,17 +126,71 @@ function setup(t, scripts, { commands = { setup: [], test: ['true'] }, indexEntr
   return s;
 }
 
-// runSingle in this process, with a stop lever, the program's log and its snapshots kept.
-function start(s, { env = {}, deps = {}, resume = false, controlDir = s.controlDir } = {}) {
+// The run's state.json, wherever the rename has put the control folder.
+function liveState(s) {
+  const dirs = [s.controlDir];
+  try {
+    for (const n of readdirSync(join(s.root, 'plans'))) dirs.push(join(s.root, 'plans', n, '.parallel', 'single'));
+  } catch {
+    // no plans folder yet
+  }
+  for (const d of dirs) {
+    try {
+      return { dir: d, state: JSON.parse(readFileSync(join(d, 'state.json'), 'utf8')) };
+    } catch {
+      // not here
+    }
+  }
+  return null;
+}
+
+// The fake finisher of a single run named `name` (fake/sessions.mjs): ready, the Go question, the merge.
+const finisherEntry = (x, name) => ({
+  match: SINGLE_FINISHER_MATCH,
+  script: singleFinisherScript({ name, statusDir: join(controlAfter(x, name), 'finisher', 'status'), repoRoot: x.root }),
+});
+const finisherId = (s, name) => JSON.parse(readFileSync(join(controlAfter(s, name), 'finisher', 'session.json'), 'utf8')).sessionId;
+// goAsked(s, name, run, { n }) → the go question's request once the finisher's conversation n has it open.
+async function goAsked(s, name, run, { n = 1, after = 0 } = {}) {
+  return waitFor(
+    () => convLog(controlAfter(s, name), 'finisher', n).filter((e) => e.dir === 'request' && e.toolName === 'AskUserQuestion').at(after) ?? null,
+    `the finisher's go question\n${run?.lines.join('\n')}`,
+  );
+}
+// The person answers the go question in the finisher's conversation, as the conversation view drops it.
+function sayGo(s, name, ask, answer = 'Go') {
+  const r = dropPersonInput(controlAfter(s, name), { to: finisherId(s, name), kind: 'answers', requestId: ask.requestId, answers: { [FINISHER_GO_QUESTION]: answer } }, { coordinatorAlive: true });
+  assert.deepEqual(r, { ok: true });
+}
+
+// Once the run waits (single-finisher DESIGN §2.4), the person merges by hand in the main checkout, which
+// ends it `merged` (§2.5 step 5). The tests written before the ending existed end their runs this way.
+function mergeWhenWaiting(s) {
+  let merged = false;
+  const timer = setInterval(() => {
+    const live = liveState(s);
+    if (merged || !live || live.state.step !== 'wait' || live.state.outcome !== null) return;
+    merged = true;
+    git(s.root, ['-c', 'user.name=T04', '-c', 'user.email=t04@test.local', 'merge', '-q', '--no-edit', `pir/${live.state.name}`]);
+  }, 50);
+  return () => clearInterval(timer);
+}
+
+// runSingle in this process, with a stop lever, the program's log and its snapshots kept. `handMerge`
+// (default on) merges the branch by hand once the run waits on the finisher.
+function start(s, { env = {}, deps = {}, resume = false, controlDir = s.controlDir, handMerge = true } = {}) {
   const stop = new AbortController();
   const lines = [];
   const snaps = [];
   let code;
+  const unmerge = handMerge ? mergeWhenWaiting(s) : () => {};
   const done = runSingle({
     controlDir,
     resume,
     deps: {
       env: { PIR_HOME: s.home, PARALLEL_REMOTE: '0', ...env },
+      // The finisher's rules are looked up under this home, never the person's (DESIGN §5.2).
+      home: s.home,
       claudePath: s.shim,
       signal: stop.signal,
       log: (l) => lines.push(l),
@@ -137,7 +201,10 @@ function start(s, { env = {}, deps = {}, resume = false, controlDir = s.controlD
       },
       ...deps,
     },
-  }).then((c) => (code = c));
+  }).then((c) => {
+    unmerge();
+    return (code = c);
+  });
   return { stop, lines, snaps, done, get code() { return code; } };
 }
 
@@ -163,18 +230,24 @@ const gone = (pid) => {
 
 // ---- The whole run. ----
 
-test('happy path: setup, builder, checks, tests green, rename, a fresh reviewer, tests green, ready; testing is never asking', async (t) => {
+test('happy path: setup, builder, checks, tests green, rename, a fresh reviewer, tests green, base unmoved, the finisher, Go, merged, finished; testing is never asking', async (t) => {
   const name = 'fix-typo';
   const s = setup(
     t,
-    [
+    (x) => [
       { match: BUILDER_MATCH, script: builder(name) },
       { match: REVIEWER_MATCH, script: reviewer(name, { steps: [commit('review.txt', 'review: a fix')] }) },
+      finisherEntry(x, name),
     ],
     { commands: { setup: ['echo setup-ran'], test: ['sleep 0.4', 'test -f change.txt'] } },
   );
   const mainBefore = git(s.root, ['rev-parse', 'main']).stdout.trim();
-  const run = start(s, { env: { PIR_RUN: '1' } });
+  const run = start(s, { env: { PIR_RUN: '1' }, handMerge: false });
+  // Nothing changes in the main checkout before the go (single-finisher §1).
+  const ask = await goAsked(s, name, run);
+  assert.equal(git(s.root, ['rev-parse', 'main']).stdout.trim(), mainBefore, 'main untouched before the go');
+  assert.equal(stateIn(controlAfter(s, name)).step, 'wait');
+  sayGo(s, name, ask);
   assert.equal(await run.done, 0, run.lines.join('\n'));
 
   // The rename: branch, worktree, control folder, index entry, all under the builder's name.
@@ -198,22 +271,26 @@ test('happy path: setup, builder, checks, tests green, rename, a fresh reviewer,
   assert.deepEqual(pirTexts(convLog(moved, 'build')), [builderInstruction({ reportsDir: reportsBefore, base: 'main', baseSha: s.baseSha, prompt: PROMPT })]);
   assert.deepEqual(pirTexts(convLog(moved, 'review')), [reviewerInstruction({ reportsDir: join(moved, 'reports'), name, base: 'main', baseSha: s.baseSha, prompt: PROMPT })]);
   const av = argvs(s);
-  assert.equal(av.length, 2, 'two sessions: builder and reviewer');
+  assert.equal(av.length, 3, 'three sessions: builder, reviewer, finisher');
   assert.ok(av[0].includes(`${s.repo} / ${ID} / single / builder`), av[0].join(' '));
   assert.ok(av[1].includes(`${s.repo} / ${name} / single / reviewer`), av[1].join(' '));
+  assert.ok(av[2].includes(`${s.repo} / ${name} / single / finisher`), av[2].join(' '));
   assert.ok(av[1].some((a) => a.startsWith('--session-id')), 'the reviewer is a fresh session');
   const buildLog = convLog(moved, 'build');
   const lastResult = buildLog.findLastIndex((e) => e.dir === 'in' && e.event.type === 'result');
   assert.ok(buildLog.findIndex((e) => e.dir === 'note' && e.kind === 'exited') > lastResult, 'the builder was closed only after its turn ended');
 
-  // The end: ready, on the renamed branch, the base untouched, nothing left running.
+  // The end: finished by the finisher's merge, on the renamed branch, nothing left running.
   const st = stateIn(moved);
-  assert.deepEqual([st.step, st.outcome, st.name, st.running], ['review', 'ready', name, null]);
+  assert.deepEqual([st.step, st.outcome, st.name, st.running], ['wait', 'finished', name, null]);
+  assert.deepEqual([st.end.sync.state, st.end.tests, st.end.finisher], ['up-to-date', 'green', 'on']);
   assert.deepEqual(st.renamed, { branch: true, worktree: true, control: true, index: true });
   assert.deepEqual([st.sessions.build.length, st.sessions.review.length], [1, 1]);
   assert.deepEqual(st.rounds, { build: 0, review: 0 });
   assert.equal(git(s.root, ['log', '-1', '--format=%s', `pir/${name}`]).stdout.trim(), 'review: a fix');
-  assert.equal(git(s.root, ['rev-parse', 'main']).stdout.trim(), mainBefore, 'main unchanged');
+  assert.ok(git(s.root, ['merge-base', '--is-ancestor', `pir/${name}`, 'main']).ok, 'the finisher merged the branch into main');
+  assert.deepEqual(testLogs(moved).filter((n) => n.startsWith('sync-')), [], 'an up-to-date sync runs no tests');
+  assert.ok(run.lines.some((l) => /finisher closed/.test(l)), run.lines.join('\n'));
   assert.deepEqual(workersIn(moved), []);
   assert.equal(existsSync(commandFileOf(moved)), false);
   assert.equal(worktreeCount(s), 2, 'the main checkout and the run, no baseline');
@@ -222,8 +299,11 @@ test('happy path: setup, builder, checks, tests green, rename, a fresh reviewer,
   const snap = readSnapshot(moved);
   assert.equal(snap.finalState, 'finished');
   assert.deepEqual([snap.proc.slug, snap.proc.branch], [name, `pir/${name}`]);
-  assert.deepEqual([snap.runState.kind, snap.runState.name, snap.runState.outcome, snap.runState.base, snap.runState.label], ['single', name, 'ready', 'main', null]);
-  assert.deepEqual(snap.runState.steps.map((x) => [x.id, x.phase]), [['build', 'done'], ['review', 'done'], ['merge', 'ready']]);
+  assert.deepEqual([snap.runState.kind, snap.runState.name, snap.runState.outcome, snap.runState.base, snap.runState.label], ['single', name, 'finished', 'main', null]);
+  // The sync and merge rows are T07's; the snapshot carries what they will read.
+  assert.deepEqual(snap.runState.steps.map((x) => [x.id, x.phase]), [['build', 'done'], ['review', 'done'], ['merge', 'pending']]);
+  assert.equal(snap.runState.end.finisher, 'on');
+  assert.ok(run.snaps.some((x) => x.runState.finisher?.state === 'awaiting-go'), 'a snapshot carries the finisher waiting for the go');
   assert.equal(snap.runState.steps[0].worker.logPath, join(moved, 'conversations', 'build-1.ndjson'), 'held paths re-pointed');
   const phases = (i) => run.snaps.map((x) => x.runState.steps[i].phase);
   for (const p of ['building', 'testing', 'done']) assert.ok(phases(0).includes(p), `a build snapshot at ${p}: ${phases(0)}`);
@@ -251,7 +331,7 @@ test('red once, then green: round 1 reaches the builder with the baseline line; 
   assert.equal(await run.done, 0, run.lines.join('\n'));
   const moved = controlAfter(s, name);
   const st = stateIn(moved);
-  assert.equal(st.outcome, 'ready');
+  assert.equal(st.outcome, 'merged');
   assert.deepEqual(st.rounds, { build: 1, review: 0 });
   assert.deepEqual(st.baseline, { ok: true, half: null, reason: null, logPath: join(s.controlDir, 'baseline.log') });
 
@@ -480,7 +560,7 @@ test('the session exits with no report → exit 1 with no final status (crashed)
 
 // ---- Stop and resume. ----
 
-test('SIGTERM during a test run: the command is gone and the run stopped; --resume runs the tests again and goes on to ready', async (t) => {
+test('SIGTERM during a test run: the command is gone and the run stopped; --resume runs the tests again and goes on to the hand merge', async (t) => {
   const name = 'stopped-testing';
   const s = setup(
     t,
@@ -523,9 +603,9 @@ test('SIGTERM during a test run: the command is gone and the run stopped; --resu
   const run = start(s, { resume: true });
   assert.equal(await run.done, 0, run.lines.join('\n'));
   const moved = controlAfter(s, name);
-  assert.equal(stateIn(moved).outcome, 'ready');
+  assert.equal(stateIn(moved).outcome, 'merged');
   assert.deepEqual(testLogs(moved), ['tests-1.log', 'tests-2.log'], 'the interrupted run, then the restarted one');
-  assert.equal(argvs(s).length, 2, 'the builder was not reopened: only the reviewer started after the resume');
+  assert.equal(argvs(s).length, 3, 'the builder was not reopened: only the reviewer and the finisher started after the resume');
   assert.deepEqual(stateIn(moved).sessions.build, stopped.sessions.build);
 });
 
@@ -549,7 +629,7 @@ test('stop while the builder works, then --resume: the same session is reopened 
   assert.equal(await run.done, 0, run.lines.join('\n'));
   const moved = controlAfter(s, name);
   const st = stateIn(moved);
-  assert.equal(st.outcome, 'ready');
+  assert.equal(st.outcome, 'merged');
   assert.deepEqual(st.sessions.build, [builderId], 'resumed under the same id');
   assert.equal(existsSync(join(moved, 'conversations', 'build-2.ndjson')), false, 'no second builder log');
   assert.deepEqual(pirTexts(convLog(moved, 'build')), [
@@ -563,7 +643,7 @@ test('stop while the builder works, then --resume: the same session is reopened 
 const gated = (p, then = 'exit 0') => `if [ -f ${q(join(p.dir, 'gate'))} ]; then ${then}; fi; echo $$ > ${q(join(p.dir, 'pid'))}; exec sleep 60`;
 const pidIn = (s) => waitFor(() => existsSync(join(s.dir, 'pid')) && Number(readFileSync(join(s.dir, 'pid'), 'utf8').trim()), 'the command line running');
 
-test('stop during the setup run: its process is gone, no session was started; --resume runs the setup again and goes on to ready', async (t) => {
+test('stop during the setup run: its process is gone, no session was started; --resume runs the setup again and goes on to the hand merge', async (t) => {
   const name = 'stopped-setup';
   const s = setup(
     t,
@@ -586,7 +666,7 @@ test('stop during the setup run: its process is gone, no session was started; --
   const run = start(s, { resume: true });
   assert.equal(await run.done, 0, run.lines.join('\n'));
   const moved = controlAfter(s, name);
-  assert.equal(stateIn(moved).outcome, 'ready');
+  assert.equal(stateIn(moved).outcome, 'merged');
   assert.equal(run.lines.filter((l) => l === 'setup run started').length, 1);
   assert.doesNotMatch(pirTexts(convLog(moved, 'build'))[0], /setup step failed/, 'the killed setup run left no note');
 });
@@ -625,7 +705,7 @@ test('stop during the baseline run: its process and its worktree are gone; --res
   assert.equal(await run.done, 0);
 });
 
-test('stop while the reviewer works, then --resume from the renamed folder: the same reviewer is reopened and the run ends ready', async (t) => {
+test('stop while the reviewer works, then --resume from the renamed folder: the same reviewer is reopened and the run ends merged by hand', async (t) => {
   const name = 'resumed-reviewer';
   const s = setup(t, (p) => [
     { match: BUILDER_MATCH, script: builder(name) },
@@ -645,8 +725,8 @@ test('stop while the reviewer works, then --resume from the renamed folder: the 
   const run = start(s, { resume: true, controlDir: moved, env: { PIR_RUN: '1' } });
   assert.equal(await run.done, 0, run.lines.join('\n'));
   const st = stateIn(moved);
-  assert.deepEqual([st.outcome, st.sessions.review], ['ready', [reviewerId]]);
-  assert.equal(argvs(s).length, 3, 'builder, reviewer, the reviewer reopened: the builder is never resumed');
+  assert.deepEqual([st.outcome, st.sessions.review], ['merged', [reviewerId]]);
+  assert.equal(argvs(s).length, 4, 'builder, reviewer, the reviewer reopened, the finisher: the builder is never resumed');
   assert.equal(existsSync(join(moved, 'conversations', 'review-2.ndjson')), false);
   assert.deepEqual(pirTexts(convLog(moved, 'review')), [
     reviewerInstruction({ reportsDir: join(moved, 'reports'), name, base: 'main', baseSha: s.baseSha, prompt: PROMPT }),
@@ -689,7 +769,7 @@ test('crash mid-rename with a baseline worktree and its test line left behind, t
   assert.equal(existsSync(join(s.root, 'plans', ID)), false);
   assert.equal(indexOf(s, name).finalState, 'finished');
   const st = stateIn(moved);
-  assert.equal(st.outcome, 'ready');
+  assert.equal(st.outcome, 'merged');
   assert.deepEqual(st.sessions.build, ['builder-session'], 'the builder was not resumed');
   assert.deepEqual(pirTexts(convLog(moved, 'review')), [reviewerInstruction({ reportsDir: join(moved, 'reports'), name, base: 'main', baseSha: s.baseSha, prompt: PROMPT })]);
   assert.deepEqual(testLogs(moved), [], 'the reviewer changed nothing: the build result stands');
@@ -921,7 +1001,7 @@ const askingBuilder = (p, name) => [
   ...turn(commit('change.txt'), report('built', name), ...say('Reported built.')),
 ];
 
-test('alerts: an asking builder sends one alert, one reminder after 15 minutes, the answer clears it, and ready sends the end alert once', async (t) => {
+test('alerts: an asking builder sends one alert, one reminder after 15 minutes, the answer clears it, and the hand-over sends no end alert', async (t) => {
   const name = 'fix-typo';
   const s = setup(t, (p) => [
     { match: BUILDER_MATCH, script: askingBuilder(p, name) },
@@ -952,13 +1032,14 @@ test('alerts: an asking builder sends one alert, one reminder after 15 minutes, 
   assert.equal(ntfy.pubs.length, 2, 'one reminder per episode');
   assert.deepEqual(ntfy.clears, []);
 
-  // The answer ends the episode: the phone is told to clear it, and the run goes on to ready.
+  // The answer ends the episode: the phone is told to clear it, and the run goes on to the finisher.
   assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, kind: 'message', text: 'README.md' }, { coordinatorAlive: true }), { ok: true });
   await waitFor(() => ntfy.clears.length === 1, 'the clear');
   assert.deepEqual(ntfy.clears[0], { ...NTFY, seq });
   assert.equal(await run.done, 0, run.lines.join('\n'));
-  assert.equal(ntfy.pubs.length, 3, 'the reviewer never asked: only the end alert followed');
-  assert.deepEqual(ntfy.pubs[2], { ...NTFY, title: 'fix-typo · ready to merge', message: 'git switch main && git merge pir/fix-typo', click: null, seq: null, icon: ICON, tags: ['tada'] });
+  // `ready to merge` is no longer sent when the finisher takes over (single-finisher DESIGN §2.12); the
+  // ending's own alerts are T06's.
+  assert.equal(ntfy.pubs.length, 2, 'the reviewer never asked, and no end alert followed');
   assert.equal(ntfy.clears.length, 1, 'nothing left to clear at the exit');
 
   // The session was started with the Claude app's own push silenced, the marker made to exist.
@@ -971,13 +1052,13 @@ test('alerts: an asking builder sends one alert, one reminder after 15 minutes, 
   assert.deepEqual(convLog(moved, 'build').filter((e) => e.dir === 'note' && e.kind === 'notified').map((e) => e.reminder), [false, true]);
   assert.ok(run.lines.includes(`notify send ${sessionId} ${seq} ok 200`), run.lines.join('\n'));
   assert.ok(run.lines.includes(`notify clear ${sessionId} ${seq} ok 200`));
-  assert.ok(run.lines.includes('notify send end - ok 200'));
+  assert.ok(!run.lines.includes('notify send end - ok 200'));
   assert.ok(!run.lines.some((l) => l.includes(TOPIC)), 'the topic is never logged');
 
   // A resume of the finished run sends nothing more.
   const again = start(s, { env, resume: true, controlDir: moved, deps: ntfy.deps });
   assert.equal(await again.done, 0);
-  assert.equal(ntfy.pubs.length, 3);
+  assert.equal(ntfy.pubs.length, 2);
 });
 
 test('alerts: a stop while a session asks clears its alert; a dropped run sends nothing', async (t) => {
@@ -1017,7 +1098,7 @@ test('alerts: with no notify.json nothing is sent, asking or ready, and the sess
   const sessionId = stateIn(s.controlDir).sessions.build[0];
   assert.deepEqual(dropPersonInput(s.controlDir, { to: sessionId, kind: 'message', text: 'README.md' }, { coordinatorAlive: true }), { ok: true });
   assert.equal(await run.done, 0, run.lines.join('\n'));
-  assert.equal(stateIn(controlAfter(s, name)).outcome, 'ready');
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
   assert.deepEqual([ntfy.pubs, ntfy.clears], [[], []]);
   // The session inherits whatever this process has (a pir worker running the suite has the variable set).
   assert.equal(readFileSync(join(s.dir, 'presence-seen'), 'utf8'), process.env.CLAUDE_CLIENT_PRESENCE_FILE ?? '');
@@ -1092,7 +1173,7 @@ test('alerts: red rounds send nothing until the builder stops on the person past
   assert.deepEqual(dropPersonInput(moved, { to: reviewerId, kind: 'message', text: 'No.' }, { coordinatorAlive: true }), { ok: true });
   assert.equal(await rrun.done, 0, rrun.lines.join('\n'));
   assert.deepEqual(rn.clears.map((c) => c.seq), [`pir-${reviewerId}-1`]);
-  assert.deepEqual(rn.pubs.slice(1).map((p) => p.title), ['fix-typo · ready to merge']);
+  assert.deepEqual(rn.pubs.slice(1).map((p) => p.title), [], 'no end alert when the finisher takes over (T06 owns the ending alerts)');
   assert.deepEqual(convLog(moved, 'review').filter((e) => e.dir === 'note' && e.kind === 'notified').length, 1);
 });
 
@@ -1135,4 +1216,303 @@ test('builder: a `!` drop runs in the run worktree and its result reaches the bu
   assert.deepEqual([ends.length, ends[1].stopped, ends[1].sent], [2, 'session-closed', 'none']);
   assert.equal(existsSync(record), false);
   await waitFor(() => gone(pid), 'the sleep to die');
+});
+
+// ---- The end sequence: sync, helpers, finisher, wait (single-finisher T05, DESIGN §2.2–§2.10). ----
+
+// A commit on main in the main checkout: the base moving while the run works.
+function commitOnMain(s, file, content) {
+  writeFileSync(join(s.root, file), content);
+  git(s.root, ['add', file]);
+  git(s.root, ['commit', '-q', '-m', `main: ${file}`]);
+  return git(s.root, ['rev-parse', 'main']).stdout.trim();
+}
+const ledgerOf = (s, name) => readLog(join(controlAfter(s, name), 'finisher', 'ledger.jsonl'));
+const syncTestLogs = (dir) => readdirSync(dir).filter((n) => /^sync-tests-\d+\.log$/.test(n)).sort();
+const holdsTip = (s, name) => git(s.root, ['merge-base', '--is-ancestor', `pir/${name}`, 'main']).ok;
+const basic = (x, name, extra = []) => [
+  { match: BUILDER_MATCH, script: builder(name) },
+  { match: REVIEWER_MATCH, script: reviewer(name) },
+  finisherEntry(x, name),
+  ...extra,
+];
+
+test('end: the base moved with no clash → a sync merge commit on pir/{name}, the tests run, the finisher starts', async (t) => {
+  const name = 'moved-base';
+  const s = setup(t, (x) => basic(x, name));
+  const mainSha = commitOnMain(s, 'other.txt', 'from main\n');
+  const run = start(s);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, name);
+  const st = stateIn(moved);
+  assert.deepEqual([st.step, st.outcome, st.end.sync.state, st.end.sync.baseSha, st.end.tests], ['wait', 'merged', 'merged', mainSha, 'green']);
+  assert.equal(git(s.root, ['log', '-1', '--format=%s', `pir/${name}~0^{/^sync}`]).stdout.trim(), `sync main into pir/${name}`);
+  assert.deepEqual(testLogs(moved), ['tests-1.log']);
+  assert.deepEqual(syncTestLogs(moved), ['sync-tests-2.log'], 'the sync run continues the numbering');
+  assert.ok(run.lines.includes('finisher started'), run.lines.join('\n'));
+  assert.ok(run.lines.includes('finisher closed'), 'the hand merge closed the finisher');
+});
+
+test('end: the base moved with a clash → a resolve helper with the files; after `resolved` the tests, then the finisher', async (t) => {
+  const name = 'clash';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_RESOLVE_MATCH, script: singleResolveScript({ name }) }]));
+  commitOnMain(s, 'change.txt', 'main side\n');
+  const run = start(s);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, name);
+  const st = stateIn(moved);
+  assert.deepEqual([st.outcome, st.end.sync.state, st.end.sync.files, st.end.tests], ['merged', 'resolved', ['change.txt'], 'green']);
+  assert.equal(st.sessions.resolve.length, 1);
+  const opening = pirTexts(convLog(moved, 'resolve'))[0];
+  assert.match(opening, /run it as the resolve helper of pir\/clash\. You are run by `pir single`\./);
+  assert.match(opening, /\n {2}change\.txt\n/);
+  assert.ok(argvs(s).some((a) => a.includes(`${s.repo} / ${name} / single / resolve`)));
+  const content = readFileSync(join(s.root, 'change.txt'), 'utf8');
+  assert.ok(content.includes('main side') && content.includes('x'), content);
+  assert.deepEqual(syncTestLogs(moved), ['sync-tests-2.log']);
+  assert.ok(run.lines.includes('finisher started'));
+});
+
+test('end: red after the sync → one fix helper; green after it → the finisher', async (t) => {
+  const name = 'red-sync';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_FIX_MATCH, script: singleFixScript({ name, fix: `${GIT} rm -q broken` }) }]), {
+    commands: { setup: [], test: ['test ! -f broken'] },
+  });
+  commitOnMain(s, 'broken', 'x\n');
+  const run = start(s);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const moved = controlAfter(s, name);
+  const st = stateIn(moved);
+  assert.deepEqual([st.outcome, st.end.tests, st.end.fixUsed, st.sessions.fix.length], ['merged', 'green', true, 1]);
+  const opening = pirTexts(convLog(moved, 'fix'))[0];
+  assert.match(opening, /the tests failed: test `test ! -f broken` exited 1\./);
+  assert.match(opening, new RegExp(`Log: ${join(moved, 'sync-tests-2.log').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.deepEqual(syncTestLogs(moved), ['sync-tests-2.log', 'sync-tests-3.log']);
+  assert.ok(run.lines.includes('finisher started'));
+});
+
+test('end: red after the fix → no finisher; the run waits red and a hand merge ends it merged', async (t) => {
+  const name = 'still-red';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_FIX_MATCH, script: singleFixScript({ name, fix: 'echo y >> other.txt' }) }]), {
+    commands: { setup: [], test: ['test ! -f broken'] },
+  });
+  commitOnMain(s, 'broken', 'x\n');
+  const run = start(s, { handMerge: false });
+  const waiting = await waitFor(() => {
+    const live = liveState(s);
+    return live?.state.step === 'wait' ? live.state : null;
+  }, 'the red wait');
+  assert.deepEqual([waiting.end.tests, waiting.end.finisher, waiting.outcome], ['red', null, null]);
+  // Two passes later it is still waiting: red does not end the run.
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(run.code, undefined);
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+  assert.ok(!run.lines.some((l) => /finisher (started|resumed)/.test(l)), 'never handed over');
+  assert.equal(stateIn(controlAfter(s, name)).sessions.fix.length, 1, 'one fix helper only');
+});
+
+test('end: the person merges by hand while the finisher waits for the go → merged, the finisher closed', async (t) => {
+  const name = 'by-hand';
+  const s = setup(t, (x) => basic(x, name));
+  const run = start(s, { handMerge: false });
+  await goAsked(s, name, run);
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+  assert.ok(run.lines.includes('finisher closed'));
+  assert.ok(!ledgerOf(s, name).some((e) => e.kind === 'go'));
+});
+
+test('end: the base moves before the go → the finisher is told resyncing, then resynced; a Go in between does not count', async (t) => {
+  const name = 'resync';
+  // The re-sync's tests are slow only once main brings slow.txt in, so the Go lands while they run.
+  const s = setup(t, (x) => basic(x, name), { commands: { setup: [], test: ['[ ! -f slow.txt ] || sleep 2'] } });
+  const run = start(s, { handMerge: false });
+  const ask = await goAsked(s, name, run);
+  const before = git(s.root, ['rev-parse', 'main']).stdout.trim();
+  commitOnMain(s, 'slow.txt', 'slow\n');
+  await waitFor(() => ledgerOf(s, name).some((e) => e.kind === 'resyncing'), 'resyncing');
+  sayGo(s, name, ask);
+  await waitFor(() => ledgerOf(s, name).some((e) => e.kind === 'resync'), `resynced\n${run.lines.join('\n')}`);
+  const kinds = ledgerOf(s, name).map((e) => e.kind);
+  assert.ok(kinds.indexOf('resyncing') < kinds.indexOf('stale-go') && kinds.indexOf('stale-go') < kinds.indexOf('resync'), kinds.join(' '));
+  assert.ok(!kinds.includes('go'), 'no go counted');
+  assert.notEqual(git(s.root, ['rev-parse', 'main']).stdout.trim(), before);
+  assert.equal(holdsTip(s, name), false, 'the finisher merged nothing');
+  const st = stateIn(controlAfter(s, name));
+  assert.deepEqual([st.step, st.end.seq, st.end.sync.state, st.end.tests], ['wait', 2, 'merged', 'green']);
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+});
+
+test('end: the finisher writes `close` → the run ends closed', async (t) => {
+  const name = 'closing';
+  const s = setup(t, (x) => [
+    { match: BUILDER_MATCH, script: builder(name) },
+    { match: REVIEWER_MATCH, script: reviewer(name) },
+    {
+      match: SINGLE_FINISHER_MATCH,
+      script: [
+        ...opening(),
+        { sh: `mkdir -p ${q(join(controlAfter(x, name), 'finisher', 'status'))} && printf '%s' '{"kind":"close","reason":"the person said leave it"}' > ${q(join(controlAfter(x, name), 'finisher', 'status', '1-close.json'))}` },
+        ...say('Closed, as asked.'),
+      ],
+    },
+  ]);
+  const run = start(s, { handMerge: false });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const st = stateIn(controlAfter(s, name));
+  assert.equal(st.outcome, 'closed');
+  assert.equal(holdsTip(s, name), false);
+  assert.ok(run.lines.includes('finisher closed'));
+});
+
+test('end: the finisher fails to start → fallback; a hand merge ends the run merged', async (t) => {
+  const name = 'no-finisher';
+  const s = setup(t, (x) => basic(x, name));
+  const run = start(s, { deps: { startFinisher: () => { throw new Error('boom'); } } });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  const st = stateIn(controlAfter(s, name));
+  assert.deepEqual([st.outcome, st.end.finisher, st.end.fallback], ['merged', 'fallback', 'failed']);
+  assert.ok(run.lines.includes('finisher failed to start: boom'), run.lines.join('\n'));
+  assert.equal(argvs(s).length, 2, 'no finisher session');
+});
+
+test('end: a stop during the wait, then --resume → the finisher resumed by id; a Go after it still finishes', async (t) => {
+  const name = 'resumed';
+  const s = setup(t, (x) => basic(x, name));
+  const first = start(s, { handMerge: false });
+  await goAsked(s, name, first);
+  const id = finisherId(s, name);
+  first.stop.abort();
+  assert.equal(await first.done, 0);
+  const moved = controlAfter(s, name);
+  assert.deepEqual([stateIn(moved).step, stateIn(moved).outcome], ['wait', null]);
+  assert.equal(holdsTip(s, name), false);
+
+  const run = start(s, { resume: true, controlDir: moved, handMerge: false });
+  const ask = await goAsked(s, name, run, { after: 1 });
+  assert.equal(finisherId(s, name), id);
+  const av = argvs(s);
+  assert.equal(av.length, 4);
+  assert.ok(av[3].some((a) => a === `--resume=${id}` || a === id), av[3].join(' '));
+  assert.ok(run.lines.includes('finisher resumed'));
+  sayGo(s, name, ask);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(moved).outcome, 'finished');
+  assert.ok(holdsTip(s, name));
+});
+
+test('end: a stop with the clash merge still in progress → --resume aborts it and syncs again', async (t) => {
+  const name = 'cut-off';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_RESOLVE_MATCH, script: singleResolveScript({ name }) }]));
+  commitOnMain(s, 'change.txt', 'main side\n');
+  let first;
+  const syncThenStop = (...args) => {
+    const r = syncBaseReal(...args);
+    first.stop.abort();
+    return r;
+  };
+  first = start(s, { deps: { syncBase: syncThenStop }, handMerge: false });
+  assert.equal(await first.done, 0, first.lines.join('\n'));
+  const moved = controlAfter(s, name);
+  const worktree = join(s.root, '.claude', 'worktrees', `pir-${name}`);
+  assert.equal(stateIn(moved).end.phase, 'merge');
+  assert.ok(syncPendingReal(worktree), 'the merge is left in progress');
+  assert.equal(stateIn(moved).sessions.resolve.length, 0);
+
+  const run = start(s, { resume: true, controlDir: moved });
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.ok(run.lines.includes('the merge left in progress was aborted'), run.lines.join('\n'));
+  const st = stateIn(moved);
+  assert.deepEqual([st.outcome, st.end.sync.state, st.sessions.resolve.length], ['merged', 'resolved', 1]);
+  assert.equal(git(worktree, ['status', '--porcelain']).stdout, '');
+});
+
+test('end: a `Go` typed as a chat message to the finisher does not merge', async (t) => {
+  const name = 'chat-go';
+  const s = setup(t, (x) => basic(x, name));
+  const run = start(s, { handMerge: false });
+  await goAsked(s, name, run);
+  assert.deepEqual(dropPersonInput(controlAfter(s, name), { to: finisherId(s, name), kind: 'message', text: 'Go' }, { coordinatorAlive: true }), { ok: true });
+  await waitFor(() => convLog(controlAfter(s, name), 'finisher').some((e) => e.dir === 'out' && e.from === 'person' && e.text === 'Go'), 'the message delivered');
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(holdsTip(s, name), false);
+  assert.ok(!ledgerOf(s, name).some((e) => e.kind === 'go'));
+  assert.equal(run.code, undefined, 'still waiting for the go');
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await run.done, 0);
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+});
+
+test('singleChecks: `resolved` refused while a merge is in progress or the tree is dirty; `fixed` refused on a dirty tree', () => {
+  const run = { id: ID, name: 'fix-typo', base: 'main' };
+  const gitWith = (status) => (cwd, args) => (args[0] === 'status' ? { ok: true, stdout: status } : { ok: true, stdout: '' });
+  const check = (kind, { status = '', pending = false, name = 'fix-typo' } = {}) =>
+    singleChecks({ kind, name, run, worktree: '/w', root: '/r', repo: 'repo', indexDir: '/i', startSha: 'a', git: gitWith(status), syncPending: () => pending });
+  assert.deepEqual(check('resolved'), { ok: true });
+  assert.deepEqual(check('fixed'), { ok: true });
+  assert.deepEqual(check('resolved', { pending: true }).failures, ['The merge is still in progress. Resolve every clashing file, commit the merge, then drop the `resolved` report again.']);
+  assert.match(check('resolved', { status: ' M a\n' }).failures[0], /uncommitted changes/);
+  assert.match(check('fixed', { status: ' M a\n' }).failures[0], /uncommitted changes/);
+  assert.deepEqual(check('fixed', { pending: true }), { ok: true }, 'a fix helper is not asked about a merge');
+  assert.equal(check('fixed', { name: 'other' }).failures[0], 'This run is pir/fix-typo, not pir/other. Drop the `fixed` report with single=fix-typo.');
+});
+
+test('canResume: a stopped or crashed single run in sync or wait resumes; a finished one never does', () => {
+  for (const step of ['sync', 'wait']) {
+    for (const state of ['stopped', 'crashed']) {
+      assert.equal(canResume({ state, record: { kind: 'single' }, snapshot: { runState: { kind: 'single', step, outcome: null } } }), true, `${state} in ${step}`);
+    }
+  }
+  for (const outcome of ['finished', 'merged', 'closed', 'dropped', 'ready']) {
+    assert.equal(canResume({ state: 'finished', record: { kind: 'single' }, snapshot: { runState: { kind: 'single', step: 'wait', outcome } } }), false, outcome);
+  }
+});
+
+// The finisher's process dies past its restart budget while the program waits on it (finisher-agent's
+// onExit sets givenUp and wakes nothing). Run as its own process, as pir runs it: with no session, no
+// command and the finisher's process gone, nothing but the loop's own wait keeps the program alive.
+test('end: the finisher gives up while the program waits, run as its own process → the program stays up in the fallback and a hand merge ends it merged', async (t) => {
+  const name = 'given-up';
+  const s = setup(t, [
+    { match: BUILDER_MATCH, script: builder(name) },
+    { match: REVIEWER_MATCH, script: reviewer(name) },
+  ]);
+  // A stand-in finisher whose only process exits after a second, given up, as finisher-agent's is.
+  const driver = join(s.dir, 'driver.mjs');
+  writeFileSync(
+    driver,
+    `import { spawn } from 'node:child_process';
+import { runSingle } from ${JSON.stringify(new URL('./single-run.mjs', import.meta.url).href)};
+const startFinisher = () => {
+  let gone = false;
+  spawn('sleep', ['1'], { stdio: 'ignore' }).on('exit', () => { gone = true; });
+  return { logPath: null, drain: () => ({ accepted: [], refused: [], go: null }), phase: () => 'preparing', goGiven: () => false,
+    givenUp: () => gone, view: () => null, resyncing: () => false, resynced: () => false, close: async () => {} };
+};
+process.exitCode = await runSingle({ controlDir: process.argv[2], deps: { startFinisher, pollMs: 500, home: process.env.PIR_HOME } });
+console.log('runSingle returned', process.exitCode);
+`,
+  );
+  const child = spawnChild(process.execPath, [driver, s.controlDir], {
+    env: { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, PIR_HOME: s.home, PIR_RUN: '1', PARALLEL_REMOTE: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  let code;
+  const exited = new Promise((r) => child.on('exit', (c) => r((code = c))));
+  t.after(() => child.kill('SIGKILL'));
+  await waitFor(() => /finisher started/.test(out), `the finisher started\n${out}`);
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.equal(code, undefined, `the program is still running in the fallback wait\n${out}`);
+  assert.equal(stateIn(controlAfter(s, name)).end.fallback, 'gave-up');
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await exited, 0, out);
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
 });
