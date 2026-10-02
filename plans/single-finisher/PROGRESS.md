@@ -20,7 +20,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | single-end-flow | — | ✅ | |
 | T04 | single-helpers-skill | — | ✅ | |
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ✅ | |
-| T06 | single-finisher-alerts | T05 | ⬜ | |
+| T06 | single-finisher-alerts | T05 | ✅ | |
 | T07 | single-finisher-screen | T05 | ✅ | Review: no defect. Added a steps-view test for a clash being resolved and a fix helper asking at 60/80/120. Probed held text, red wait, re-sync under the finisher, closed merged check, installed copy. The pty rig does not drive the clash or red-after-fix runs; T08's drill covers them. Recorded deviations accepted. |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |

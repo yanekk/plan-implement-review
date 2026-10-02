@@ -37,7 +37,7 @@ import { mergeLine } from '../core/coordinator-brief.mjs';
 import { finisherEntry, finisherRow } from '../core/display.mjs';
 import { baseWatchVerdict, watchDue } from '../core/basewatch.mjs';
 import { chooseRules } from '../core/finisher-policy.mjs';
-import { alertText, newNotifyState, notifyExit, notifyStep } from '../core/notify.mjs';
+import { alertText, endAlert, finisherAlert, finisherNotifyView, newNotifyState, notifyExit, notifyStep, singleEndAlert } from '../core/notify.mjs';
 import { resumeInstruction } from '../core/planflow.mjs';
 import { askingText } from '../core/plandisplay.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
@@ -54,7 +54,18 @@ import { workerActivity } from '../core/stream.mjs';
 import { writeJsonAtomic } from './atomic-write.mjs';
 import { prepareBase as prepareBaseReal } from './base-branch.mjs';
 import { startLines as startLinesReal } from './commands.mjs';
-import { NOTIFY_EXIT_WAIT_MS, baseWatchMs, newNotifyTrack, readAskRules, runNotifyActions, withinMs } from './coordinate.mjs';
+import {
+  NOTIFY_EXIT_WAIT_MS,
+  baseWatchMs,
+  endAlertAction,
+  finisherOneShot,
+  holdAlertAction,
+  holdAlertPass,
+  newNotifyTrack,
+  readAskRules,
+  runNotifyActions,
+  withinMs,
+} from './coordinate.mjs';
 import { readJson, withAgent } from './coordinator-agent.mjs';
 import { startFinisher as startFinisherReal } from './finisher-agent.mjs';
 import { startWorker as startWorkerReal } from './worker-proc.mjs';
@@ -217,6 +228,8 @@ const askingState = (state, running) => ({ accepted: state.accepted ?? state.pen
 // In `sync` and `wait` both work steps are done. The end sequence has two rows of its own (single-finisher
 // DESIGN §2.11), each with its `text` in the words of §2.11's table (syncRow, mergeRow below); the snapshot
 // also carries `end` (state.end) and `finisher` (the finisher's view() while it is on, else null).
+// `helper` is the sync helper held now, with whether it asks the person by the same rule as a step row,
+// for the phone (§2.12); null outside one.
 export function singleRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {}, running = null, finisher = null } = {}) {
   const runningKind = running?.kind ?? state.running ?? null;
   const testing = state.outcome == null && TESTING.has(runningKind);
@@ -269,6 +282,23 @@ export function singleRunState(state, { label = null, sessions = [], since = {},
     ],
     end: state.end ?? null,
     finisher,
+    helper: helperEntry(state, sessions, runningKind),
+  };
+}
+
+// helperEntry(state, sessions, runningKind) → { id: 'resolve'|'fix', asking, worker } for the sync helper
+// the current phase holds, or null. Asking reads as a step row's does: a live session stopped on the
+// person with no accepted report, or a parked request (held-session sessionAsking).
+function helperEntry(state, sessions, runningKind) {
+  if (state.outcome != null || state.step !== 'sync') return null;
+  const phase = state.end?.phase;
+  const id = phase === 'resolving' ? 'resolve' : phase === 'fixing' ? 'fix' : null;
+  if (!id) return null;
+  const live = sessions.filter((s) => s.step === id && s.live).at(-1) ?? null;
+  return {
+    id,
+    asking: sessionAsking(askingState(state, runningKind), live),
+    worker: live ? { id: live.id, live: true, logPath: live.logPath ?? null, cwd: live.cwd ?? null } : null,
   };
 }
 
@@ -351,14 +381,17 @@ function mergeRow(state, finisher) {
 }
 
 // singleNotifyViews(runState, sessions, { id, remoteOn }) → the episode machine's views (core/notify.mjs),
-// one per step whose live session asks the person (§2.10). Pure. It reads `asking` off the run state the
+// one per step whose live session asks the person (§2.10), one for a sync helper asking (`{name} · resolve`
+// / `· fix`), and the finisher's (finisherNotifyView, id `finisher`: ready for your go, stuck, a parked
+// request) while runState.finisher is present (single-finisher DESIGN §2.12). Pure. The finisher's entry
+// in `sessions` is found by its view's id and carries { pending, url, remoteRefused }. It reads `asking` off the run state the
 // row is painted from, so the phone and the row cannot disagree: a session idle while pir tests has no
 // view. `sessions` are [{ id, activity, lastText, url, remoteRefused }]; `id` is the run id, which names
 // the run in the title when it has neither a name nor a label (a run started without PIR_RUN).
 export function singleNotifyViews(runState, sessions = [], { id = null, remoteOn = true } = {}) {
   const views = [];
   for (const step of runState?.steps ?? []) {
-    // Only the builder's and the reviewer's questions alert here; a sync helper's are T06's (§2.12).
+    // Only the builder's and the reviewer's rows alert here; a sync helper's comes from `helper` below, once.
     if (!step.asking || !step.worker?.live || !ROLE[step.id]) continue;
     const s = sessions.find((x) => x.id === step.worker.id);
     if (!s) continue;
@@ -371,7 +404,75 @@ export function singleNotifyViews(runState, sessions = [], { id = null, remoteOn
     });
     views.push({ id: s.id, waiting: step.asking, title, message, remote: s.remoteRefused ? 'refused' : remoteOn ? 'wanted' : 'off', url: s.url ?? null });
   }
+  const plan = runState?.name ?? runState?.label ?? id;
+  const h = runState?.helper;
+  const hs = h?.asking && h.worker?.live ? sessions.find((x) => x.id === h.worker.id) : null;
+  if (hs) {
+    const { title, message } = alertText({ plan, name: ROLE[h.id], kind: h.asking, lastText: hs.lastText ?? null, pending: hs.activity?.pending });
+    views.push({ id: hs.id, waiting: h.asking, title, message, remote: hs.remoteRefused ? 'refused' : remoteOn ? 'wanted' : 'off', url: hs.url ?? null });
+  }
+  const fin = runState?.finisher;
+  if (fin) {
+    const fs = sessions.find((x) => fin.id && x.id === fin.id) ?? {};
+    const v = finisherNotifyView({ slug: plan, view: fin, pending: fs.pending ?? [], url: fs.url ?? null, remote: fs.remoteRefused ? 'refused' : remoteOn ? 'wanted' : 'off' });
+    if (v) views.push(v);
+  }
   return views;
+}
+
+// singleEndAlerts(state, sent, { summary }) → { sent, alerts }: the end sequence's one-shot alerts due on
+// this pass (single-finisher DESIGN §2.12), each { kind: 'hold'|'end'|'finisher', alert }. Pure. `sent` is
+// what this program already sent: { holdReason, redSeq, fallback, finished }.
+//   a held sync      holdAlert once per reason, through holdAlertPass, as builds do
+//   a red settle     endAlert `{name} · not ready` once per sync sequence (end.seq)
+//   fallback failed  singleEndAlert `{name} · ready to merge`: the finisher never started
+//   fallback gave-up the finisher's `{name} · finisher gave up` with the merge line
+//   outcome finished the finisher's `{name} · finished` with its summary
+// Nothing on `merged`, `closed` or `dropped`: the person did it, or agreed it in the conversation.
+export function singleEndAlerts(state, sent = {}, { summary = null } = {}) {
+  const e = state?.end ?? {};
+  const name = state?.name ?? state?.id ?? '';
+  const base = state?.base ?? 'main';
+  const next = { holdReason: null, redSeq: null, fallback: null, finished: false, ...sent };
+  const alerts = [];
+  if (state?.outcome === 'finished') {
+    if (!next.finished) alerts.push({ kind: 'finisher', alert: finisherAlert({ slug: name, phase: 'done', summary }) });
+    next.finished = true;
+    return { sent: next, alerts };
+  }
+  if (state?.outcome != null) return { sent: next, alerts };
+  next.holdReason = holdAlertPass({
+    r: { finished: false, handoff: { hold: state.step === 'sync' ? e.hold ?? null : null } },
+    slug: name,
+    sentReason: next.holdReason,
+    send: (alert) => alerts.push({ kind: 'hold', alert }),
+  });
+  if (state.step === 'wait' && e.tests === 'red' && next.redSeq !== e.seq) {
+    next.redSeq = e.seq;
+    alerts.push({
+      kind: 'end',
+      alert: endAlert({ slug: name, ready: false, reason: e.testsReason?.reason ?? null, unresolved: e.sync?.state === 'unresolved', base }),
+    });
+  }
+  if (e.finisher === 'fallback' && next.fallback !== e.fallback) {
+    next.fallback = e.fallback;
+    if (e.fallback === 'failed') alerts.push({ kind: 'end', alert: singleEndAlert({ name, base }) });
+    else if (e.fallback === 'gave-up') alerts.push({ kind: 'finisher', alert: finisherAlert({ slug: name, phase: 'gave-up', base }) });
+  }
+  return { sent: next, alerts };
+}
+
+// singleEndSeen(state) → the `sent` a program starting over this state treats as already sent: a resumed
+// red wait or fallback was alerted by the program that reached it. A hold is re-tried on resume, so its
+// alert is left to come again.
+export function singleEndSeen(state) {
+  const e = state?.end ?? {};
+  return {
+    holdReason: null,
+    redSeq: state?.step === 'wait' && e.tests === 'red' ? e.seq : null,
+    fallback: e.finisher === 'fallback' ? e.fallback ?? null : null,
+    finished: state?.outcome === 'finished',
+  };
 }
 
 // nextTestsLogPath(controlDir, { sync }) → tests-{n}.log, or sync-tests-{n}.log for a run of the end
@@ -799,11 +900,45 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
           url: x.worker.remoteUrl ?? null,
           remoteRefused: !!x.worker.remoteRefused,
         }));
+      // The finisher's parked requests and its link, found by its view's id (§2.12).
+      if (finisher) {
+        let pending = [];
+        try {
+          pending = finisher.alive?.() ? finisher.session?.pending?.() ?? [] : [];
+        } catch {
+          pending = [];
+        }
+        sessions.push({ id: finisher.id, pending, url: finisher.remoteUrl?.() ?? null, remoteRefused: !!finisher.session?.remoteRefused });
+      }
       const step = notifyStep(notifyState, singleNotifyViews(rs, sessions, { id: state.id, remoteOn: remote }), now());
       notifyState = step.state;
-      if (step.actions.length) runNotify(step.actions);
+      // The finisher's episodes are noted in its own conversation, as for builds (coordinate notifyPass).
+      const finisherId = finisher?.id ?? null;
+      if (step.actions.length) runNotify(step.actions.map((a) => (a.id === 'finisher' && a.type === 'send' ? { ...a, noteTo: finisherId } : a)));
     } catch (err) {
       log(`notify pass failed: ${err?.message ?? err}`);
+    }
+  };
+  // The end sequence's one-shots (single-finisher DESIGN §2.12): a held sync, a red settle, the fallback.
+  // What a resumed program finds already reached was alerted by the program that reached it.
+  let endSent = singleEndSeen(state);
+  // The finisher's last summary and link, kept for its `finished` alert: it is closed before the finish.
+  let lastFinisherSummary = null;
+  let lastFinisherUrl = null;
+  const endAlertActions = () => {
+    const summary = lastFinisherSummary ?? readJson(join(controlDir, 'finisher', 'state.json'))?.summary ?? null;
+    const { sent, alerts } = singleEndAlerts(state, endSent, { summary });
+    endSent = sent;
+    return alerts.map(({ kind, alert }) =>
+      kind === 'hold' ? holdAlertAction(alert) : kind === 'end' ? endAlertAction(alert) : finisherOneShot(alert, { click: kind === 'finisher' && state.outcome === 'finished' ? lastFinisherUrl : null }),
+    );
+  };
+  const endAlertPassNow = () => {
+    try {
+      const actions = endAlertActions();
+      if (actions.length) runNotify(actions);
+    } catch (err) {
+      log(`end alert pass failed: ${err?.message ?? err}`);
     }
   };
   // The clears for every open episode (and the end alert, when given), awaited at most 2 s: the process
@@ -905,6 +1040,12 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
     for (const st of out.accepted) log(`finisher status: ${st.kind}`);
     for (const r of out.refused ?? []) log(`finisher status ${r.file} refused: ${r.why}`);
     if (out.go) log(`go given (${out.go.by})`);
+    try {
+      lastFinisherSummary = finisher.view()?.summary ?? lastFinisherSummary;
+      lastFinisherUrl = finisher.remoteUrl?.() ?? lastFinisherUrl;
+    } catch {
+      // the view is for the alert only
+    }
     return { started: true, phase: finisher.phase(), goGiven: finisher.goGiven(), givenUp, failed: false, accepted: out.accepted.map((st) => ({ kind: st.kind })) };
   };
   // startTheFinisher() → start it, or resume it by id when its session.json is there (§2.7, §2.10). A throw
@@ -1126,9 +1267,16 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
           await closeFinisher();
           recordFinal('finished');
           log(`finished: ${a.outcome}`);
-          // The end alerts of the new ending are T06's (single-finisher DESIGN §2.12); a `--resume` of a
-          // finished run takes the nothing-to-resume exit above and sends nothing.
-          await notifyExitNow();
+          // The finisher's `finished` one-shot, awaited with the exit clears (single-finisher DESIGN §2.12);
+          // `merged`, `closed` and `dropped` send none. A `--resume` of a finished run takes the
+          // nothing-to-resume exit above and sends nothing.
+          let ends = [];
+          try {
+            ends = endAlertActions();
+          } catch (err) {
+            log(`end alert pass failed: ${err?.message ?? err}`);
+          }
+          await notifyExitNow(ends.length ? runNotify(ends) : null);
           return 0;
         } else if (a.type === 'exitCrashed') {
           paint();
@@ -1144,6 +1292,7 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       const rs = runState();
       paint(null, rs);
       alertPass(rs);
+      endAlertPassNow();
       if (again) continue;
       // A finisher's status or a line of its conversation (a go) wakes the pass: startFinisher has no
       // activity hook of its own.
