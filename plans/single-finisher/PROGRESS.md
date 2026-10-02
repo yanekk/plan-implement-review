@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-watch | — | ⬜ | |
+| T01 | base-watch | — | ✅ | |
 | T02 | finisher-for-single | — | ⬜ | |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ⬜ | |
