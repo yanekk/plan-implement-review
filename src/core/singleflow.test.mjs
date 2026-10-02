@@ -14,6 +14,8 @@ import {
   initialSingleState,
   decideSingleStep,
   singleProgress,
+  helperInstruction,
+  SYNC_RETRY_MS,
 } from './singleflow.mjs';
 
 const ALL_DONE = { branch: true, worktree: true, control: true, index: true };
@@ -94,7 +96,11 @@ test('isValidSingleName: kebab, and neither run-id shape', () => {
 test('singleSessionName: five fields, no task segment', () => {
   assert.equal(singleSessionName({ repo: 'app', run: 'single-3fa2', step: 'build' }), 'app / single-3fa2 / single / builder');
   assert.equal(singleSessionName({ repo: 'app', run: 'fix-typo', step: 'review' }), 'app / fix-typo / single / reviewer');
-  assert.throws(() => singleSessionName({ repo: 'app', run: 'x', step: 'plan' }), /'build' or 'review'/);
+  assert.equal(singleSessionName({ repo: 'app', run: 'fix-typo', step: 'resolve' }), 'app / fix-typo / single / resolve');
+  assert.equal(singleSessionName({ repo: 'app', run: 'fix-typo', step: 'fix' }), 'app / fix-typo / single / fix');
+  for (const bad of ['plan', 'sync', 'wait', 'toString']) {
+    assert.throws(() => singleSessionName({ repo: 'app', run: 'x', step: bad }), /'build', 'review', 'resolve' or 'fix'/, bad);
+  }
 });
 
 // --- instructions (DESIGN §2.6) -----------------------------------------------------------------
@@ -210,7 +216,7 @@ test('initialSingleState: the §3.5 shape', () => {
     id: 'single-3fa2',
     name: null,
     step: 'setup',
-    sessions: { build: [], review: [] },
+    sessions: { build: [], review: [], resolve: [], fix: [] },
     commands: { setup: ['npm ci'], test: ['npm test'] },
     base: 'main',
     baseSha: BASE_SHA,
@@ -225,6 +231,10 @@ test('initialSingleState: the §3.5 shape', () => {
     running: null,
     pending: null,
     red: null,
+    end: {
+      seq: 0, phase: null, sync: null, tests: null, testsReason: null, fixUsed: false, hold: null,
+      localSeen: null, remote: null, finisher: null, fallback: null,
+    },
   });
   assert.throws(() => initialSingleState({ id: 'plan-3fa2', base: 'main', baseSha: BASE_SHA, commands: { setup: [], test: ['t'] } }), /single-\{hex4\}/);
 });
@@ -728,7 +738,7 @@ test('a whole run: setup, build, one red, green, rename, review, ready', () => {
     'closeWhenIdle', 'rename', 'rename', 'rename', 'rename', 'spawn', 'check', 'closeWhenIdle', 'finish',
   ]);
   assert.equal(s.outcome, 'ready');
-  assert.deepEqual(s.sessions, { build: ['b1'], review: ['r1'] });
+  assert.deepEqual(s.sessions, { build: ['b1'], review: ['r1'], resolve: [], fix: [] });
   assert.deepEqual(s.rounds, { build: 1, review: 0 });
 });
 
@@ -753,4 +763,459 @@ test('singleProgress: a red round shows after the step\'s tests', () => {
   // The build's rounds do not follow the run into review, and a working step has no `tests` to mark.
   assert.equal(singleProgress({ step: 'review', phase: 'testing', outcome: null, rounds: { build: 2, review: 0 } }), 'build ✓ review · tests …');
   assert.equal(singleProgress({ step: 'build', phase: 'working', outcome: null, rounds: { build: 2, review: 0 } }), 'build …');
+});
+
+// --- the end sequence (single-finisher DESIGN §2.2–§2.10, T03) ----------------------------------
+
+const END = { endSequence: true };
+const dE = (s, f = {}) => decideSingleStep(s, f, END);
+const BSHA = 'c'.repeat(40);
+const BSHA2 = 'd'.repeat(40);
+const LOCAL = 'e'.repeat(40);
+const OK_BASE = (sha = BSHA) => ({ ok: true, sha, remote: 'origin', localTip: LOCAL, reason: null, text: null });
+const FETCH_FAILED = { ok: false, sha: null, remote: 'origin', reason: 'fetch-failed', text: 'cannot reach origin' };
+const FIN = (extra = {}) => ({ started: true, phase: 'awaiting-go', goGiven: false, givenUp: false, failed: false, accepted: [], ...extra });
+
+// The reviewer reported at the head the build tested green, and is idle: the sync begins.
+function reviewedGreen() {
+  const s = dE(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE }).state;
+  return dE(s, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE });
+}
+// In `sync`, the base prepared at BSHA and syncBase asked for.
+function merging(from = reviewedGreen().state) {
+  return dE(from, { base: OK_BASE() }).state;
+}
+// In `wait` with the finisher on, the first sync up to date.
+function finisherOn() {
+  return dE(merging(), { sync: { state: 'up-to-date', baseSha: BSHA, files: [] } }).state;
+}
+// The `merged` sync's tests run; returns the state with tests in flight.
+function syncTesting(from = merging()) {
+  return dE(from, { sync: { state: 'merged', baseSha: BSHA, files: [] } }).state;
+}
+const sGreen = () => ({ kind: 'tests', ok: true, half: null, reason: null, logPath: '/c/sync-tests-2.log', tail: '', head: H2, clean: true });
+const sRed = () => ({ kind: 'tests', ok: false, half: 'test', reason: 'test `npm test` exited 1', logPath: '/c/sync-tests-2.log', tail: '', head: H2, clean: true });
+
+test('without endSequence a green review still finishes ready', () => {
+  const s = decideSingleStep(reviewing(), { reports: [{ kind: 'reviewed', name: 'fix-typo', body: '' }], renamed: ALL_DONE }).state;
+  const r = decideSingleStep(s, { checks: PASS, head: H1, idle: true, renamed: ALL_DONE });
+  assert.deepEqual(r.actions.at(-1), { type: 'finish', outcome: 'ready' });
+});
+
+test('review accepted head green, idle → close the reviewer, sync, prepareBase start; no finish', () => {
+  const r = reviewedGreen();
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.step, 'sync');
+  assert.equal(r.state.outcome, null);
+  assert.equal(r.state.end.phase, 'prepare');
+  assert.equal(r.state.end.seq, 1);
+  assert.equal(r.state.end.tests, 'green');
+  assert.equal(r.state.live, false);
+});
+
+test('base not ok → hold with the text; before nextTry nothing; at nextTry prepare again; same reason keeps since', () => {
+  assert.equal(SYNC_RETRY_MS, 60_000);
+  let r = dE(reviewedGreen().state, { base: FETCH_FAILED, now: 1000 });
+  assert.deepEqual(r.actions, []);
+  assert.deepEqual(r.state.end.hold, { reason: 'fetch-failed', text: 'cannot reach origin', since: 1000, nextTry: 61000 });
+  assert.equal(r.state.end.phase, 'prepare');
+  r = dE(r.state, { now: 60999 });
+  assert.deepEqual(r.actions, []);
+  r = dE(r.state, { now: 61000 });
+  assert.deepEqual(r.actions, [{ type: 'prepareBase', mode: 'start' }]);
+  r = dE(r.state, { base: FETCH_FAILED, now: 61005 });
+  assert.equal(r.state.end.hold.since, 1000, 'the same reason is one hold');
+  assert.equal(r.state.end.hold.nextTry, 121005);
+  r = dE(r.state, { base: { ...FETCH_FAILED, reason: 'diverged', text: 'main has diverged' }, now: 62000 });
+  assert.equal(r.state.end.hold.since, 62000, 'a new reason is a new hold');
+  r = dE(r.state, { now: 122000 });
+  r = dE(r.state, { base: OK_BASE(), now: 122001 });
+  assert.equal(r.state.end.hold, null);
+  assert.deepEqual(r.actions, [{ type: 'syncBase', baseSha: BSHA }]);
+});
+
+test('prepareBase no-base-branch holds like fetch-failed', () => {
+  const r = dE(reviewedGreen().state, { base: { ok: false, reason: 'no-base-branch', text: 'no main branch', remote: null }, now: 5 });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.end.hold.reason, 'no-base-branch');
+  assert.equal(r.state.end.hold.text, 'no main branch');
+});
+
+test('the base already holds the tip at the sync → finish merged', () => {
+  const r = dE(reviewedGreen().state, { base: OK_BASE(), watch: 'merged' });
+  assert.deepEqual(r.actions, [{ type: 'finish', outcome: 'merged' }]);
+  assert.equal(r.state.outcome, 'merged');
+  // While held too: a hand merge seen on the local base ends the run.
+  const held = dE(reviewedGreen().state, { base: FETCH_FAILED, now: 1 }).state;
+  assert.deepEqual(dE(held, { watch: 'merged', now: 2 }).actions, [{ type: 'finish', outcome: 'merged' }]);
+});
+
+test('base ok → syncBase with its sha, localSeen and remote kept', () => {
+  const r = dE(reviewedGreen().state, { base: OK_BASE() });
+  assert.deepEqual(r.actions, [{ type: 'syncBase', baseSha: BSHA }]);
+  assert.equal(r.state.end.phase, 'merge');
+  assert.equal(r.state.end.localSeen, LOCAL);
+  assert.equal(r.state.end.remote, 'origin');
+});
+
+test('up-to-date → wait, tests green, startFinisher, finisher on', () => {
+  const r = dE(merging(), { sync: { state: 'up-to-date', baseSha: BSHA, files: [] } });
+  assert.deepEqual(r.actions, [{ type: 'startFinisher' }]);
+  assert.equal(r.state.step, 'wait');
+  assert.equal(r.state.end.tests, 'green');
+  assert.equal(r.state.end.finisher, 'on');
+  assert.deepEqual(r.state.end.sync, { state: 'up-to-date', baseSha: BSHA, files: [] });
+});
+
+test('merged → runTests; green → wait and startFinisher', () => {
+  const r1 = dE(merging(), { sync: { state: 'merged', baseSha: BSHA, files: [] } });
+  assert.deepEqual(r1.actions, [{ type: 'runTests', head: null }]);
+  assert.equal(r1.state.end.phase, 'testing');
+  const r2 = dE(r1.state, { commandDone: sGreen() });
+  assert.deepEqual(r2.actions, [{ type: 'startFinisher' }]);
+  assert.equal(r2.state.step, 'wait');
+  assert.equal(r2.state.end.tests, 'green');
+});
+
+test('merged → red → spawn fix; fixed accepted → runTests; green → startFinisher', () => {
+  let r = dE(syncTesting(), { commandDone: sRed() });
+  assert.deepEqual(r.actions, [{ type: 'spawn', step: 'fix' }]);
+  assert.equal(r.state.end.phase, 'fixing');
+  assert.equal(r.state.end.fixUsed, true);
+  assert.deepEqual(r.state.end.testsReason, { reason: 'test `npm test` exited 1', logPath: '/c/sync-tests-2.log' });
+  r = dE(r.state, { sessionId: 'fx1' });
+  assert.deepEqual(r.state.sessions.fix, ['fx1']);
+  r = dE(r.state, { reports: [{ kind: 'fixed', name: 'fix-typo', body: '' }] });
+  assert.deepEqual(r.actions, [{ type: 'check', kind: 'fixed', name: 'fix-typo' }]);
+  r = dE(r.state, { checks: PASS, head: H2, idle: false });
+  assert.deepEqual(r.actions, [], 'the idle gate holds the close');
+  r = dE(r.state, { idle: true });
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'runTests', head: null }]);
+  r = dE(r.state, { commandDone: sGreen() });
+  assert.deepEqual(r.actions, [{ type: 'startFinisher' }]);
+  assert.equal(r.state.end.finisher, 'on');
+});
+
+test('red after the fix → wait red, no startFinisher, no second fix', () => {
+  let r = dE(syncTesting(), { commandDone: sRed() });
+  r = dE(r.state, { sessionId: 'fx1' });
+  r = dE(r.state, { reports: [{ kind: 'fixed', name: 'fix-typo', body: '' }] });
+  r = dE(r.state, { checks: PASS, head: H2, idle: true });
+  r = dE(r.state, { commandDone: sRed() });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.step, 'wait');
+  assert.equal(r.state.end.tests, 'red');
+  assert.equal(r.state.end.finisher, null);
+});
+
+test('a failed fixed check is sent once to the helper', () => {
+  let r = dE(syncTesting(), { commandDone: sRed() });
+  r = dE(r.state, { sessionId: 'fx1' });
+  r = dE(r.state, { reports: [{ kind: 'fixed', name: 'fix-typo', body: '' }] });
+  r = dE(r.state, { checks: { ok: false, failures: ['the worktree is not clean'] } });
+  assert.deepEqual(types(r.actions), ['send']);
+  assert.match(r.actions[0].text, /`fixed` report for pir\/fix-typo/);
+  r = dE(r.state, { reports: [{ kind: 'fixed', name: 'fix-typo', body: '' }] });
+  r = dE(r.state, { checks: { ok: false, failures: ['the worktree is not clean'] } });
+  assert.deepEqual(r.actions, []);
+});
+
+test('fix helper exits with no report → the tests run anyway', () => {
+  let r = dE(syncTesting(), { commandDone: sRed() });
+  r = dE(r.state, { sessionId: 'fx1' });
+  r = dE(r.state, { exited: true, live: true });
+  assert.deepEqual(r.actions, [{ type: 'runTests', head: null }]);
+  assert.equal(r.state.live, false);
+});
+
+test('conflict → spawn resolve with the files; resolved accepted → runTests', () => {
+  let r = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['README.md', 'src/a.js'] } });
+  assert.deepEqual(r.actions, [{ type: 'spawn', step: 'resolve' }]);
+  assert.deepEqual(r.state.end.sync, { state: 'conflict', baseSha: BSHA, files: ['README.md', 'src/a.js'] });
+  assert.equal(r.state.end.phase, 'resolving');
+  r = dE(r.state, { sessionId: 'rs1' });
+  assert.deepEqual(r.state.sessions.resolve, ['rs1']);
+  r = dE(r.state, { reports: [{ kind: 'resolved', name: 'fix-typo', body: '' }] });
+  assert.deepEqual(r.actions, [{ type: 'check', kind: 'resolved', name: 'fix-typo' }]);
+  r = dE(r.state, { checks: PASS, head: H2, idle: true });
+  assert.deepEqual(r.actions, [{ type: 'closeWhenIdle' }, { type: 'runTests', head: null }]);
+  assert.equal(r.state.end.sync.state, 'resolved');
+});
+
+test('resolve helper exits with syncPending → abortSync, unresolved, wait red', () => {
+  let r = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['a'] } });
+  r = dE(r.state, { sessionId: 'rs1' });
+  r = dE(r.state, { exited: true, syncPending: true });
+  assert.deepEqual(r.actions, [{ type: 'abortSync' }]);
+  assert.equal(r.state.end.sync.state, 'unresolved');
+  assert.equal(r.state.step, 'wait');
+  assert.equal(r.state.end.tests, 'red');
+});
+
+test('resolve helper exits having committed the merge → resolved, tests run', () => {
+  let r = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['a'] } });
+  r = dE(r.state, { sessionId: 'rs1' });
+  r = dE(r.state, { exited: true, syncPending: false });
+  assert.deepEqual(r.actions, [{ type: 'runTests', head: null }]);
+  assert.equal(r.state.end.sync.state, 'resolved');
+});
+
+test('sync error → unresolved, wait red, no helper', () => {
+  const r = dE(merging(), { sync: { state: 'error', baseSha: BSHA, files: [], error: 'git refused' } });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.end.sync.state, 'unresolved');
+  assert.equal(r.state.step, 'wait');
+  assert.equal(r.state.end.tests, 'red');
+});
+
+test('a helper dropped, and built/reviewed sent during the sync, are ignored', () => {
+  let r = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['a'] } });
+  r = dE(r.state, { sessionId: 'rs1' });
+  const before = r.state;
+  for (const kind of ['dropped', 'built', 'reviewed', 'fixed']) {
+    const x = dE(before, { reports: [{ kind, name: 'fix-typo', body: 'no' }] });
+    assert.deepEqual(x.actions, [], kind);
+    assert.equal(x.state.outcome, null, kind);
+  }
+  // `resolved` while fixing is not the fix helper's kind either.
+  let f = dE(syncTesting(), { commandDone: sRed() });
+  f = dE(f.state, { sessionId: 'fx1' });
+  assert.deepEqual(dE(f.state, { reports: [{ kind: 'resolved', name: 'fix-typo', body: '' }] }).actions, []);
+  // A report while pir itself syncs or tests is nobody's.
+  assert.deepEqual(dE(syncTesting(), { reports: [{ kind: 'fixed', name: 'fix-typo', body: '' }] }).actions, []);
+});
+
+test('wait, finisher on: done → finished; close → closed', () => {
+  const s = finisherOn();
+  let r = dE(s, { finisher: FIN({ accepted: [{ kind: 'done' }] }) });
+  assert.deepEqual(r.actions, [{ type: 'closeFinisher' }, { type: 'finish', outcome: 'finished' }]);
+  assert.equal(r.state.outcome, 'finished');
+  r = dE(s, { finisher: FIN({ accepted: [{ kind: 'ready' }, { kind: 'close' }] }) });
+  assert.deepEqual(r.actions.at(-1), { type: 'finish', outcome: 'closed' });
+  assert.deepEqual(dE(s, { finisher: FIN() }).actions, [], 'waiting for the go');
+});
+
+test('before go: merged → closeFinisher, finish merged; moved → resyncing, seq + 1, fixUsed reset, prepare', () => {
+  const s = finisherOn();
+  let r = dE(s, { finisher: FIN(), watch: 'merged' });
+  assert.deepEqual(r.actions, [{ type: 'closeFinisher' }, { type: 'finish', outcome: 'merged' }]);
+  const used = { ...s, end: { ...s.end, fixUsed: true } };
+  r = dE(used, { finisher: FIN(), watch: 'moved' });
+  assert.deepEqual(r.actions, [{ type: 'finisherResyncing' }, { type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.step, 'sync');
+  assert.equal(r.state.end.seq, s.end.seq + 1);
+  assert.equal(r.state.end.fixUsed, false);
+  assert.equal(r.state.end.finisher, 'on');
+});
+
+test('re-sync settles green → finisherResynced; red → closeFinisher, fallback red; a later green never restarts it', () => {
+  const moved = dE(finisherOn(), { finisher: FIN(), watch: 'moved' }).state;
+  const prepared = dE(moved, { base: OK_BASE(BSHA2), finisher: FIN() }).state;
+  const tested = dE(prepared, { sync: { state: 'merged', baseSha: BSHA2, files: [] }, finisher: FIN() }).state;
+  let r = dE(tested, { commandDone: sGreen(), finisher: FIN() });
+  assert.deepEqual(r.actions, [{ type: 'finisherResynced', baseSha: BSHA2 }]);
+  assert.equal(r.state.step, 'wait');
+
+  // Red: the one fix, then red again.
+  r = dE(tested, { commandDone: sRed(), finisher: FIN() });
+  r = dE(r.state, { sessionId: 'fx1' });
+  r = dE(r.state, { exited: true });
+  r = dE(r.state, { commandDone: sRed(), finisher: FIN() });
+  assert.deepEqual(r.actions, [{ type: 'closeFinisher' }]);
+  assert.equal(r.state.end.finisher, 'fallback');
+  assert.equal(r.state.end.fallback, 'red');
+  assert.equal(r.state.end.tests, 'red');
+
+  // The base moves again and the branch goes green: no second hand-over.
+  r = dE(r.state, { watch: 'moved' });
+  assert.deepEqual(r.actions, [{ type: 'prepareBase', mode: 'start' }]);
+  r = dE(r.state, { base: OK_BASE(BSHA) });
+  r = dE(r.state, { sync: { state: 'merged', baseSha: BSHA, files: [] } });
+  r = dE(r.state, { commandDone: sGreen() });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.step, 'wait');
+  assert.equal(r.state.end.tests, 'green');
+  assert.equal(r.state.end.finisher, 'fallback');
+});
+
+test('after go: the watch is ignored; only done or close end the run', () => {
+  const s = finisherOn();
+  for (const watch of ['merged', 'moved']) {
+    assert.deepEqual(dE(s, { finisher: FIN({ goGiven: true, phase: 'finishing' }), watch }).actions, [], watch);
+  }
+  assert.deepEqual(dE(s, { finisher: FIN({ goGiven: true, accepted: [{ kind: 'done' }] }), watch: 'merged' }).actions.at(-1), {
+    type: 'finish', outcome: 'finished',
+  });
+});
+
+test('givenUp → closeFinisher, fallback gave-up; failed → fallback failed; then merged ends, moved re-syncs and stays in fallback', () => {
+  let r = dE(finisherOn(), { finisher: FIN({ givenUp: true }) });
+  assert.deepEqual(r.actions, [{ type: 'closeFinisher' }]);
+  assert.equal(r.state.end.fallback, 'gave-up');
+  assert.equal(r.state.end.finisher, 'fallback');
+  const failed = dE(finisherOn(), { finisher: { started: false, failed: true } });
+  assert.deepEqual(failed.actions, [], 'nothing to close: it never started');
+  assert.equal(failed.state.end.fallback, 'failed');
+
+  assert.deepEqual(dE(r.state, { watch: 'merged' }).actions, [{ type: 'finish', outcome: 'merged' }]);
+  r = dE(r.state, { watch: 'moved' });
+  assert.deepEqual(r.actions, [{ type: 'prepareBase', mode: 'start' }]);
+  r = dE(r.state, { base: OK_BASE(BSHA2) });
+  r = dE(r.state, { sync: { state: 'merged', baseSha: BSHA2, files: [] } });
+  r = dE(r.state, { commandDone: sGreen() });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.end.finisher, 'fallback');
+});
+
+test('red wait: moved → a new sequence; green → startFinisher (never started before)', () => {
+  let r = dE(merging(), { sync: { state: 'error', baseSha: BSHA, files: [] } });
+  assert.equal(r.state.end.tests, 'red');
+  assert.deepEqual(dE(r.state, {}).actions, [], 'red waits');
+  r = dE(r.state, { watch: 'moved' });
+  assert.deepEqual(r.actions, [{ type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.end.seq, 2);
+  r = dE(r.state, { base: OK_BASE(BSHA2) });
+  r = dE(r.state, { sync: { state: 'merged', baseSha: BSHA2, files: [] } });
+  r = dE(r.state, { commandDone: sGreen() });
+  assert.deepEqual(r.actions, [{ type: 'startFinisher' }]);
+  assert.equal(r.state.end.finisher, 'on');
+});
+
+test('a red wait seeing up-to-date on its re-sync stays red', () => {
+  let r = dE(syncTesting(), { commandDone: sRed() });
+  r = dE(r.state, { sessionId: 'fx1' });
+  r = dE(r.state, { exited: true });
+  r = dE(r.state, { commandDone: sRed() });
+  r = dE(r.state, { watch: 'moved' });
+  r = dE(r.state, { base: OK_BASE() });
+  r = dE(r.state, { sync: { state: 'up-to-date', baseSha: BSHA, files: [] } });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.state.end.tests, 'red');
+});
+
+test('resume in sync: a merge in progress with no helper → abortSync then prepareBase', () => {
+  // Crashed while syncBase ran: the merge stopped half way.
+  const r = dE(merging(), { resume: true, syncPending: true });
+  assert.deepEqual(r.actions, [{ type: 'abortSync' }, { type: 'prepareBase', mode: 'start' }]);
+  assert.equal(r.state.end.tests, null, 'a merge that may have landed is tested again');
+  // And an up-to-date sync then runs the tests rather than trusting the review's green.
+  const r2 = dE(dE(r.state, { base: OK_BASE() }).state, { sync: { state: 'up-to-date', baseSha: BSHA, files: [] } });
+  assert.deepEqual(r2.actions, [{ type: 'runTests', head: null }]);
+  // Held in prepare: just prepared again.
+  const held = dE(reviewedGreen().state, { base: FETCH_FAILED, now: 1 }).state;
+  assert.deepEqual(dE(held, { resume: true, now: 2 }).actions, [{ type: 'prepareBase', mode: 'start' }]);
+});
+
+test('resume with a helper on record → resumeSession; tests in flight → started again', () => {
+  let r = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['a'] } });
+  r = dE(r.state, { sessionId: 'rs1' });
+  let x = dE(r.state, { resume: true, syncPending: true });
+  assert.deepEqual(x.actions, [{ type: 'resumeSession', step: 'resolve', sessionId: 'rs1' }]);
+  assert.equal(x.state.live, true);
+
+  let f = dE(syncTesting(), { commandDone: sRed() });
+  f = dE(f.state, { sessionId: 'fx1' });
+  x = dE(f.state, { resume: true });
+  assert.deepEqual(x.actions, [{ type: 'resumeSession', step: 'fix', sessionId: 'fx1' }]);
+
+  x = dE(syncTesting(), { resume: true });
+  assert.deepEqual(x.actions, [{ type: 'runTests', head: null }]);
+
+  // A resolve helper that never got an id: the merge is abandoned and the sync starts again.
+  const noId = dE(merging(), { sync: { state: 'conflict', baseSha: BSHA, files: ['a'] } }).state;
+  assert.deepEqual(dE(noId, { resume: true, syncPending: true }).actions, [{ type: 'abortSync' }, { type: 'prepareBase', mode: 'start' }]);
+});
+
+test('resume in wait: finisher on → startFinisher; its phase done → finished', () => {
+  assert.deepEqual(dE(finisherOn(), { resume: true }).actions, [{ type: 'startFinisher' }]);
+  assert.deepEqual(dE(finisherOn(), { resume: true, finisher: { started: false, phase: 'done' } }).actions, [{ type: 'finish', outcome: 'finished' }]);
+  // A red wait just watches.
+  const redWait = dE(merging(), { sync: { state: 'error', baseSha: BSHA, files: [] } }).state;
+  assert.deepEqual(dE(redWait, { resume: true }).actions, []);
+  assert.deepEqual(dE(redWait, { resume: true, watch: 'merged' }).actions, [{ type: 'finish', outcome: 'merged' }]);
+});
+
+test('right after startFinisher: givenUp → gave-up; phase done → finished; a resume after a merged sync → resynced', () => {
+  const started = finisherOn();
+  assert.equal(dE(started, { finisher: FIN({ givenUp: true }) }).state.end.fallback, 'gave-up');
+  assert.deepEqual(dE(started, { finisher: FIN({ phase: 'done' }) }).actions.at(-1), { type: 'finish', outcome: 'finished' });
+  // The last sync merged the base in: the resumed finisher's old steps are void.
+  const merged = dE(syncTesting(), { commandDone: sGreen() }).state;
+  assert.deepEqual(dE(merged, { resume: true }).actions, [{ type: 'startFinisher' }, { type: 'finisherResynced', baseSha: BSHA }]);
+  // A resume mid re-sync whose program holds no finisher: started again, then told.
+  const moved = dE(finisherOn(), { finisher: FIN(), watch: 'moved' }).state;
+  let r = dE(moved, { resume: true });
+  r = dE(r.state, { base: OK_BASE(BSHA2) });
+  r = dE(r.state, { sync: { state: 'merged', baseSha: BSHA2, files: [] } });
+  r = dE(r.state, { commandDone: sGreen() });
+  assert.deepEqual(r.actions, [{ type: 'startFinisher' }, { type: 'finisherResynced', baseSha: BSHA2 }]);
+});
+
+test('a finished run returns no actions, whatever its outcome', () => {
+  for (const outcome of ['finished', 'merged', 'closed', 'dropped', 'ready']) {
+    const s = { ...finisherOn(), outcome };
+    assert.deepEqual(dE(s, { resume: true, watch: 'moved', finisher: FIN({ accepted: [{ kind: 'done' }] }) }).actions, [], outcome);
+  }
+});
+
+test('an old state.json without end, resolve or fix loads with defaults', () => {
+  const old = JSON.parse(JSON.stringify(reviewing()));
+  delete old.end;
+  old.sessions = { build: ['b1'], review: ['r1'], stray: ['x'] };
+  const r = dE(old, { renamed: ALL_DONE });
+  assert.deepEqual(r.state.sessions, { build: ['b1'], review: ['r1'], resolve: [], fix: [] });
+  assert.equal(r.state.end.seq, 0);
+  assert.equal(r.state.end.finisher, null);
+  // And a legacy finished `ready` stays finished.
+  assert.deepEqual(dE({ ...old, outcome: 'ready' }, { resume: true }).actions, []);
+});
+
+test('the end state survives JSON and the input is never mutated', () => {
+  const s = finisherOn();
+  const frozen = JSON.parse(JSON.stringify(s));
+  dE(s, { finisher: FIN(), watch: 'moved' });
+  assert.deepEqual(s, frozen);
+});
+
+test('parseSingleReport: resolved and fixed, each with a name', () => {
+  assert.deepEqual(parseSingleReport('[pir:v1 kind=resolved single=fix-typo]\nmerged'), { kind: 'resolved', name: 'fix-typo', body: 'merged' });
+  assert.deepEqual(parseSingleReport('[pir:v1 kind=fixed single=fix-typo]'), { kind: 'fixed', name: 'fix-typo', body: '' });
+  assert.equal(parseSingleReport('[pir:v1 kind=resolved single=-]'), null);
+  assert.equal(parseSingleReport('[pir:v1 kind=fixed single=-]'), null);
+});
+
+test('helperInstruction: both roles name the skill, the role, pir single, the reports folder and the base', () => {
+  const resolve = helperInstruction({ role: 'resolve', name: 'fix-typo', base: 'main', reportsDir: '/r/reports', files: ['README.md', 'src/a.js'] });
+  assert.equal(
+    resolve,
+    'Load the pir-single skill and run it as the resolve helper of pir/fix-typo. You are run by `pir single`. ' +
+      'Reports folder: /r/reports. Base: main.\n' +
+      'pir merged main into pir/fix-typo and the merge stopped on a clash in:\n' +
+      '  README.md\n  src/a.js\n' +
+      'Finish the merge in progress: resolve these files keeping the intent of both sides, commit the merge, and report `resolved`.',
+  );
+  const fix = helperInstruction({ role: 'fix', name: 'fix-typo', base: 'main', reportsDir: '/r/reports', testsReason: 'test `npm test` exited 1', logPath: '/c/sync-tests-2.log' });
+  assert.equal(
+    fix,
+    'Load the pir-single skill and run it as the fix helper of pir/fix-typo. You are run by `pir single`. ' +
+      'Reports folder: /r/reports. Base: main.\n' +
+      'pir merged main into pir/fix-typo and the tests failed: test `npm test` exited 1.\n' +
+      'Log: /c/sync-tests-2.log\n' +
+      'Make the tests pass without undoing the change or the merged main, commit, and report `fixed`. ' +
+      'If nothing can be fixed, report `fixed` and say why.',
+  );
+  assert.doesNotMatch(helperInstruction({ role: 'fix', name: 'x', base: 'main', reportsDir: '/r' }), /Log:/);
+  assert.throws(() => helperInstruction({ role: 'build', name: 'x', base: 'main', reportsDir: '/r' }), /'resolve' or 'fix'/);
+});
+
+test('singleProgress: the end-sequence cells, and legacy ready unchanged', () => {
+  assert.equal(singleProgress({ step: 'sync', phase: 'working' }), 'build ✓ review ✓ sync …');
+  assert.equal(singleProgress({ step: 'sync', phase: 'testing' }), 'build ✓ review ✓ sync · tests …');
+  assert.equal(singleProgress({ step: 'wait', phase: 'working', tests: 'green' }), 'build ✓ review ✓ sync ✓ merge …');
+  assert.equal(singleProgress({ step: 'wait', phase: 'working', tests: 'red' }), 'build ✓ review ✓ sync ✗');
+  assert.equal(singleProgress({ step: 'wait', outcome: 'finished' }), 'build ✓ review ✓ sync ✓ merge ✓');
+  assert.equal(singleProgress({ step: 'sync', outcome: 'merged' }), 'build ✓ review ✓ sync ✓ merge ✓');
+  assert.equal(singleProgress({ step: 'wait', outcome: 'closed' }), 'build ✓ review ✓ sync ✓ merge ✗');
+  assert.equal(singleProgress({ step: 'review', outcome: 'ready' }), 'build ✓ review ✓');
+  assert.equal(singleProgress({ step: 'review', outcome: 'dropped' }), 'build ✓ review ✗');
 });

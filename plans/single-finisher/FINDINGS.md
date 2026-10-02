@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-02 | 🔄 | User decided the PROGRESS cell of a single run ended `closed` reads `build ✓ review ✓ sync ✓ merge ✗` (§2.11 named none); `singleProgress` in T03. |
 | 2026-10-01 | 📌 | `npm test` in a fresh copy under load average ~23 took 12–13 min and failed twice, different timing-bound tests each time (`plan-run.test.mjs`, `plan-rig-single-row.test.mjs`, live-workers T05); the failing files pass alone. Rerun before believing red. |
 | 2026-10-01 | 📌 | `~/.pir/notify.json` does not exist on this machine, so no phone alert is sent during T10 or any drill; the finisher's phone path was verified for builds 2026-09-30 (`plans/finisher` FINDINGS). |
 | 2026-10-01 | 📌 | This shell's first `node` is nvm's v22.17.1, below `engines` `>=22.19`; `/opt/homebrew/bin/node` is v26.7.0. `npm test` ran under v22.17.1 at plan time. |
