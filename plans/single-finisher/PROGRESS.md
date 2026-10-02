@@ -18,7 +18,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T01 | base-watch | — | ⬜ | |
 | T02 | finisher-for-single | — | ⬜ | |
 | T03 | single-end-flow | — | ⬜ | |
-| T04 | single-helpers-skill | — | 🔍 | `## The helpers (resolve and fix)` in pir-single; step 4 hands to the finisher; 2 new skill tests. Deviations: helper headers checked as exact text, not via parseSingleReport (T03 adds the kinds; T05 cross-checks); also reworded the stale "person merges by hand" lines in What binds both sessions and The reviewer. Installed. |
+| T04 | single-helpers-skill | — | ✅ | Helpers section, step 4 handoff to the finisher, 2 skill tests. Review fix: After you report, Dropping and the frontmatter still spoke only to builder and reviewer (red rounds, "either session may drop"); reworded, test locks it, mutation-checked. Probed opening-phrase match with T03's spec. Installed, diff clean.
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ⬜ | |
 | T06 | single-finisher-alerts | T05 | ⬜ | |
 | T07 | single-finisher-screen | T05 | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T04
+**Review queue:** empty
 
 ## Blocked on the user
 
