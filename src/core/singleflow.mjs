@@ -2,7 +2,8 @@
 //
 // A single run makes one small change without a plan: pir runs the project's setup, holds a builder
 // session that commits the change, runs the tests itself, renames the run to the builder's name, holds a
-// fresh reviewer, runs the tests again and ends `ready`. This module decides every step of that from the
+// fresh reviewer, runs the tests again, then brings the base in and hands the branch to the finisher
+// (single-finisher DESIGN §2.2–§2.10). This module decides every step of that from the
 // saved state (`state.json`) and what the shell just observed, and returns the effects as a list of
 // actions for the shell (src/shell/single-run.mjs) to execute in order. It reads no clock, no file and
 // no process (boundary.test.mjs), so a whole run, red rounds and baseline included, is a millisecond test.
@@ -20,7 +21,8 @@
 //   { type: 'runBaseline' }                      the same at the starting commit, in a throwaway worktree
 //   { type: 'closeWhenIdle' }                    close the live session at the idle gate
 //   { type: 'rename', substep }                  one of RENAME_SUBSTEPS, in order
-//   { type: 'finish', outcome }                  the run ends 'ready' | 'dropped'. A command still in
+//   { type: 'finish', outcome }                  the run ends 'finished' | 'merged' | 'closed' | 'dropped'
+//                                                (a legacy state may carry 'ready'). A command still in
 //                                                flight (a `dropped` during a test run) is the shell's to kill.
 //   { type: 'exitCrashed' }                      exit with no final status, so the run shows crashed
 //
@@ -313,12 +315,9 @@ function rejectionText(report, failures) {
 //   now:         ms, for the hold's retry only
 // }
 //
-// `opts.endSequence` (T03 → T05): false keeps today's `finish('ready')` after a green review; true starts
-// the sync instead. The shell turns it on in T05, which removes the option.
-//
 // A step's session is closed only once it is idle (or gone): that is the idle gate, and it is what stops
 // a final commit being cut off. While tests run the session stays open, because a red run goes back to it.
-export function decideSingleStep(state, facts = {}, { endSequence = false } = {}) {
+export function decideSingleStep(state, facts = {}) {
   const s = clone(state);
   const actions = [];
   // A finished run is final: neither `ready` nor `dropped` is resumable (§2.11).
@@ -550,15 +549,13 @@ export function decideSingleStep(state, facts = {}, { endSequence = false } = {}
           renameRemaining();
           s.step = 'review';
           open('review');
-        } else if (endSequence) {
-          // The green review starts the end sequence instead of ending the run (single-finisher §2.2).
+        } else {
+          // The green review starts the end sequence; the run no longer ends `ready` (single-finisher §2.2).
           s.accepted = null;
           s.rejected = null;
           s.step = 'sync';
           s.end = { ...s.end, seq: s.end.seq + 1, tests: 'green', testsReason: null, fixUsed: false, sync: null, hold: null };
           startPrepare(s, actions);
-        } else {
-          finish('ready');
         }
       }
       return { state: s, actions };

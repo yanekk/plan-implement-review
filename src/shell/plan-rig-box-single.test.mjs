@@ -12,6 +12,8 @@ import { SINGLE_HINT } from './list-view.mjs';
 import { SINGLE_RIG_NAME, SINGLE_RIG_QUESTION } from './plan-rig.mjs';
 import { git, SIZES, ENTER, LEFT, TAB, esc, until, typeSettled, lastLine, rigWithTeardown, headOf, showsPopup, boxText, clearBox, SPAWNED_MS } from './plan-rig-helpers.mjs';
 
+const SKIP_T07 = "skip: T07 — waits for the old 'ready to merge' row, which a single run no longer reaches since single-finisher T05; T07 re-enables it";
+
 const recordsOf = (rig) => listRecords({ dir: indexDir({ env: rig.env }) });
 // The pop-up's rows: under the box's bottom border (head, border, text, border), above the hint line.
 const popupRows = (rows) => {
@@ -20,7 +22,7 @@ const popupRows = (rows) => {
 };
 
 for (const [cols, rows] of SIZES) {
-  test(`end to end at ${cols}×${rows}: @repo/single fix the typo, Enter → the builder's conversation; its question answered there, the view follows into the reviewer's`, { timeout: 120000 }, async (t) => {
+  test(`end to end at ${cols}×${rows}: @repo/single fix the typo, Enter → the builder's conversation; its question answered there, the view follows into the reviewer's`, { timeout: 120000, skip: SKIP_T07 }, async (t) => {
     const rig = rigWithTeardown(t, { scripts: 'single-asks' });
     const screen = rig.openScreen({ cols, rows });
     try {

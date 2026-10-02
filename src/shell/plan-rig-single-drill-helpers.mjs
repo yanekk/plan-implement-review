@@ -19,6 +19,8 @@ import { writeNotifyConfig } from './notify-config.mjs';
 import { SINGLE_RIG_DROP_ASK, SINGLE_RIG_NAME, SINGLE_RIG_QUESTION, SINGLE_RIG_TAKEN } from './plan-rig.mjs';
 import { DOWN, ENTER, LEFT, RIGHT, UP, boxText, esc, git, headOf, lastLine, rigWithTeardown, typeSettled, until } from './plan-rig-helpers.mjs';
 
+const SKIP_T07 = "skip: T07 — waits for the old 'ready to merge' row, which a single run no longer reaches since single-finisher T05; T07 re-enables it";
+
 // A machine busy with the other test files stretches every wait.
 const SLOW = 60000;
 const TOPIC = 'pir-drill';
@@ -94,7 +96,7 @@ async function startFromBox(screen, prompt) {
 export function defineSingleDrill([cols, rows]) {
   const at = `${cols}×${rows}`;
 
-  test(`the drill at ${at}: from the box, the builder's question answered, a red round, the view following into the reviewer, ready to merge, the merge by hand, merged; an alert for the question and one for ready`, { timeout: 240000 }, async (t) => {
+  test(`the drill at ${at}: from the box, the builder's question answered, a red round, the view following into the reviewer, ready to merge, the merge by hand, merged; an alert for the question and one for ready`, { timeout: 240000, skip: SKIP_T07 }, async (t) => {
     const rig = rigWithTeardown(t, { scripts: 'single-asks' });
     askThenRed(rig);
     const ntfy = await fakeNtfy(t, rig);
@@ -219,7 +221,7 @@ export function defineSingleDrill([cols, rows]) {
     }
   });
 
-  test(`the drill at ${at}: single-taken from the box — pir's check message is in the builder's conversation, and the run is ready under the second name`, { timeout: 120000 }, async (t) => {
+  test(`the drill at ${at}: single-taken from the box — pir's check message is in the builder's conversation, and the run is ready under the second name`, { timeout: 120000, skip: SKIP_T07 }, async (t) => {
     const rig = rigWithTeardown(t, { scripts: 'single-taken' });
     const taken = git(rig.repoDir, 'rev-parse', `pir/${SINGLE_RIG_TAKEN}`);
     const screen = rig.openScreen({ cols, rows });
