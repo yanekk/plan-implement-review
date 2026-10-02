@@ -21,7 +21,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T04 | single-helpers-skill | — | ✅ | |
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ✅ | |
 | T06 | single-finisher-alerts | T05 | ✅ | |
-| T07 | single-finisher-screen | T05 | ⬜ | |
+| T07 | single-finisher-screen | T05 | ✅ | |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
