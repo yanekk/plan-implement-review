@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- Throwaway mock for plans/sequential-testing. Non-binding: the vibe, not a spec. -->
+<html><head><meta charset="utf-8"><title>pir · test queue mock</title>
+<style>
+body{background:#1e1e2e;color:#cdd6f4;font:14px/1.45 Menlo,monospace;margin:0;padding:24px}
+.term{max-width:980px;margin:auto;border:1px solid #45475a;border-radius:6px;padding:14px 18px;min-height:460px}
+.tabs{max-width:980px;margin:0 auto 10px;color:#a6adc8}
+.tabs button{background:#313244;color:#cdd6f4;border:0;padding:6px 10px;margin-right:6px;border-radius:4px;cursor:pointer;font:inherit}
+.tabs button.on{background:#585b70}
+pre{margin:0;white-space:pre}
+.dim{color:#6c7086}.amber{color:#f9e2af;font-weight:bold}.green{color:#a6e3a1}.cyan{color:#89dceb}.red{color:#f38ba8}.blue{color:#89b4fa}
+.sel{background:#45475a;display:inline-block;width:100%}
+.note{max-width:980px;margin:12px auto;color:#a6adc8;font-size:13px}
+</style></head><body>
+<div class="tabs">
+ <button data-v="list" class="on">1 · dashboard list</button>
+ <button data-v="queue">2 · test queue</button>
+ <button data-v="watch">3 · a build's live view</button>
+ <button data-v="stopped">4 · build stopped on 3rd red</button>
+</div>
+<div class="term"><pre id="out"></pre></div>
+<div class="note" id="hint"></div>
+<script>
+const S={view:'list',sel:0,queue:[
+ {run:'checkout-flow',repo:'shop',what:'T05 cart-totals · review',tr:'try 1',wait:'2:10'},
+ {run:'fix-login-typo',repo:'site',what:'single · builder',tr:'round 1',wait:'1:42'},
+ {run:'checkout-flow',repo:'shop',what:'T07 receipt-email · implement',tr:'try 2',wait:'0:55'},
+ {run:'search-v2',repo:'shop',what:'T02 index-schema · implement',tr:'try 1',wait:'0:12'},
+],armed:false,killed:false};
+const $=id=>document.getElementById(id);
+function list(){return [
+'<span class="dim">pir · 3 runs · </span><span class="amber">1 waiting for you</span>','',
+'<span class="'+(S.sel===0?'sel':'')+'"><span class="cyan">⧗ test queue</span>  running <b>search-v2 T01 implement</b> · 3:12 / 30:00 · <b>'+S.queue.length+'</b> waiting</span>',
+'',
+'<span class="dim">  SLUG             TYPE    STATE              REPO   PROGRESS</span>',
+'  checkout-flow    work    <span class="green">● running</span>          shop   <span class="blue">████████░░░░</span> 5/9',
+'  search-v2        work    <span class="green">● running</span>          shop   <span class="blue">██░░░░░░░░░░</span> 1/6',
+'  fix-login-typo   single  <span class="cyan">● waiting for tests</span> site   build · tests (2nd in queue)',
+'  old-importer     work    <span class="amber">● asking you</span>        tools  <span class="blue">██████████░░</span> 7/8',
+'','','<span class="dim">@</span>','',
+'<span class="dim">↑↓ move · ↵ open · Ctrl+R/S/X twice resume/stop/remove · esc quit</span>'].join('\n')}
+function queue(){const L=['<span class="cyan">⧗ test queue</span> <span class="dim">· one suite at a time on this machine</span>',''];
+ L.push('<span class="dim">RUNNING</span>');
+ if(S.killed){L.push('  <span class="red">✕ search-v2 · T01 index-reader · implement · try 1 — killed by you (counts as a failed try)</span>');}
+ else L.push('  <span class="cyan">⠋</span> search-v2  <span class="dim">shop</span>  T01 index-reader · implement · try 1   <b>3:12</b> <span class="dim">/ limit 30:00</span>'+(S.armed?'   <span class="amber">Ctrl+K again to kill this suite</span>':''));
+ L.push('','<span class="dim">WAITING   RUN              REPO   FOR                               TRY       WAITED</span>');
+ S.queue.forEach((q,i)=>{const r=`  ${String(i+1).padEnd(8)}${q.run.padEnd(17)}${q.repo.padEnd(7)}${q.what.padEnd(34)}${q.tr.padEnd(10)}${q.wait}`;L.push(i===S.sel?'<span class="sel">'+r+'</span>':r)});
+ L.push('','','<span class="dim">↑↓ pick · b bump to the front · Ctrl+K Ctrl+K kill the running suite · ↵ open its run · ← back · esc quit</span>');return L.join('\n')}
+function watch(){return [
+'<b>pir/checkout-flow</b> <span class="dim">· 5/9 done · 4 running · ceiling 4</span>','',
+'  <span class="green">✓</span> T01 cart-model              merged                        12:40',
+'  <span class="green">✓</span> T02 price-rules             merged                         9:02',
+'  <span class="cyan">⠋</span> T05 cart-totals             <span class="cyan">waiting for tests · 1st in queue</span>   2:10',
+'  <span class="cyan">⠋</span> T06 coupon-codes            <span class="cyan">testing</span> · 1:55 / 30:00',
+'  <span class="cyan">⠋</span> T07 receipt-email           <span class="cyan">waiting for tests · 3rd · try 2</span>    0:55',
+'  <span class="cyan">⠋</span> T08 tax-table               <span class="cyan">fixing tests · try 2 of 3</span>        4:31',
+'  <span class="dim">·</span> T09 checkout-e2e            <span class="dim">needs T05 T06 T07 T08</span>','',
+'<span class="dim">↑↓ pick a task · → open its worker · c coordinator · ← back</span>'].join('\n')}
+function stopped(){return [
+'<span class="dim">pir · 3 runs</span>','',
+'<span class="dim">  SLUG             TYPE    STATE              REPO   PROGRESS</span>',
+'<span class="sel">  checkout-flow    work    <span class="amber">◼ stopped · tests red</span> shop  <span class="blue">████████░░░░</span> 5/9</span>','',
+'<span class="red">  T08 tax-table: pir\'s tests failed 3 times (implement). The build is stopped.</span>',
+'<span class="dim">  test `npm test` exited 1 · log plans/checkout-flow/.parallel/control/tests-T08-3.log</span>',
+'<span class="dim">  Fix it in .claude/worktrees/pir-checkout-flow-T08 if you like, then Ctrl+R Ctrl+R to resume:</span>',
+'<span class="dim">  the worker reopens, commits what it finds, and pir tests again with 3 fresh tries.</span>','',
+'<span class="dim">  phone: "checkout-flow · stopped — T08 tests red 3 times"</span>'].join('\n')}
+const hints={list:'Click the "test queue" line (or press ↵ on it) to open the queue.',queue:'Try ↑↓, b (bump), Ctrl+K twice (kill), ← back.',watch:'Task rows while tests queue, run, or are being fixed.',stopped:'What you see after the 3rd red run.'};
+function draw(){$('out').innerHTML=({list,queue,watch,stopped})[S.view]();$('hint').textContent=hints[S.view];
+ document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===S.view))}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{S.view=b.dataset.v;S.sel=0;S.armed=false;draw()});
+$('out').onclick=()=>{if(S.view==='list'){S.view='queue';S.sel=0;draw()}};
+document.onkeydown=e=>{if(S.view==='list'&&e.key==='Enter'){S.view='queue';draw();return}
+ if(S.view!=='queue')return;
+ if(e.key==='ArrowDown')S.sel=Math.min(S.queue.length-1,S.sel+1);
+ else if(e.key==='ArrowUp')S.sel=Math.max(0,S.sel-1);
+ else if(e.key==='b'&&S.queue.length){const[x]=S.queue.splice(S.sel,1);S.queue.unshift(x);S.sel=0}
+ else if(e.ctrlKey&&e.key==='k'){e.preventDefault();if(S.armed){S.killed=true;S.armed=false}else S.armed=true}
+ else if(e.key==='ArrowLeft'){S.view='list'}
+ if(!(e.ctrlKey&&e.key==='k'))S.armed=false;draw()};
+draw();
+</script></body></html>
