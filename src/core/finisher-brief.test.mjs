@@ -32,6 +32,46 @@ test('the opening names the skill, plan, branch, target branch, rules file, main
   assert.match(text, /a chat message never is/);
 });
 
+// The build's opening as it was before single runs had a finisher (single-finisher T02): `kind` defaults to
+// 'build' and must leave it byte for byte.
+const BUILD_OPENING_SNAPSHOT = "Invoke the pir-finisher skill and follow it. You are the finisher of the parallel build of plan `demo`: its branch is ready to merge into `dev`.\nPlan: demo\nBranch: pir/demo\nTarget branch: dev\nRules file: /r/.pir/rules/on-finish.md\nRules source: the project's own rules, committed in the repo\nMain checkout: /r\nReport: plans/demo/REPORT.md\nStatus folder: /r/plans/demo/.parallel/control/finisher/status\nYou may only look until the person says go: pir refuses anything that changes a file, a branch or the world. Prepare the steps the rules ask for, write a `ready` status into the status folder, then ask the go question: one AskUserQuestion, header `Go`, options `Go` and `Not yet`. Only the person's `Go` answer to that question is the go; a chat message never is.";
+
+test('with no kind, and with kind build, the opening is the build text byte for byte', () => {
+  assert.equal(finisherOpening(base), BUILD_OPENING_SNAPSHOT);
+  assert.equal(finisherOpening({ ...base, kind: 'build' }), BUILD_OPENING_SNAPSHOT);
+  assert.equal(finisherOpening({ ...base, promptPath: '/x/prompt.md' }), BUILD_OPENING_SNAPSHOT, 'promptPath is ignored for a build');
+});
+
+test('kind single names the single run and its prompt, drops Plan and Report, keeps every other line', () => {
+  const single = {
+    ...base, kind: 'single', reportPath: null, promptPath: '/r/plans/demo/.parallel/single/prompt.md',
+    statusDir: '/r/plans/demo/.parallel/single/finisher/status',
+  };
+  const text = finisherOpening(single);
+  assert.equal(
+    text.split('\n')[0],
+    'Invoke the pir-finisher skill and follow it. You are the finisher of the single run `demo`: a small change, built and reviewed, whose branch is ready to merge into `dev`.',
+  );
+  assert.doesNotMatch(text, /parallel build/);
+  assert.match(text, /^Change asked for: \/r\/plans\/demo\/\.parallel\/single\/prompt\.md$/m);
+  assert.doesNotMatch(text, /^Plan:/m);
+  assert.doesNotMatch(text, /^Report:/m);
+  assert.doesNotMatch(text, /null/);
+  assert.match(text, /^Branch: pir\/demo$/m);
+  assert.match(text, /^Target branch: dev$/m);
+  assert.match(text, /^Rules file: \/r\/\.pir\/rules\/on-finish\.md$/m);
+  assert.match(text, /^Rules source: the project's own rules/m);
+  assert.match(text, /^Main checkout: \/r$/m);
+  assert.match(text, /^Status folder: \/r\/plans\/demo\/\.parallel\/single\/finisher\/status$/m);
+  // Every line after the first is the build's, less Plan and Report, plus Change asked for in Report's place.
+  const buildLines = finisherOpening({ ...base, statusDir: single.statusDir }).split('\n').slice(1).filter((l) => !/^(Plan|Report):/.test(l));
+  const singleLines = text.split('\n').slice(1).filter((l) => !/^Change asked for:/.test(l));
+  assert.deepEqual(singleLines, buildLines);
+  assert.match(text, GO);
+  assert.match(text, /a chat message never is/);
+  assert.ok(text.length < 1500, `${text.length} characters`);
+});
+
 test('the opening names each rules source distinctly; built-in says install.sh never ran', () => {
   const sources = ['project', 'yours', 'default', 'built-in'];
   const lines = sources.map((s) => finisherOpening({ ...base, rulesSource: s }).match(/^Rules source: (.*)$/m)[1]);

@@ -15,8 +15,8 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-watch | — | ⬜ | |
-| T02 | finisher-for-single | — | ⬜ | |
+| T01 | base-watch | — | ✅ | |
+| T02 | finisher-for-single | — | ✅ | |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ✅ | Helpers section, step 4 handoff to the finisher, 2 skill tests. Review fix: After you report, Dropping and the frontmatter still spoke only to builder and reviewer (red rounds, "either session may drop"); reworded, test locks it, mutation-checked. Probed opening-phrase match with T03's spec. Installed, diff clean.
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ⬜ | |
