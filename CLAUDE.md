@@ -440,8 +440,18 @@ The `pir` command and the `pir-*` skills do not run from this checkout.
 `~/.claude/pir-engine/src/shell/pir.mjs` — the baked-in path, not this repo. So editing
 `src/` or `skills/` here changes nothing a user runs until the install is refreshed.
 
-**After changing engine code or a skill, run `./install.sh` to make it live**, then confirm
-the change reached the installed copy (e.g. grep the line in `~/.claude/pir-engine/src/...`).
+**Who installs depends on where the session runs.** The installed copy is the one every `pir`
+session on the machine runs, live builds included, so it only ever receives merged code:
+
+- **A classic session on the base branch** that changed engine code or a skill runs
+  `./install.sh` to make it live, then confirms the change reached the installed copy (e.g. grep
+  the line in `~/.claude/pir-engine/src/...`).
+- **A session run by `pir`** — a parallel worker, a `pir plan` planner or reviewer, a single
+  run's builder or reviewer — never runs `./install.sh` and never copies into `~/.claude/`. Its
+  branch is unmerged and unreviewed, and installing it would swap the engine and skills under
+  every live run, the run it belongs to included. The finishing rules (`.pir/rules/on-finish.md`)
+  install once the branch is merged, so such a session neither asks about it nor logs it.
+
 The script is idempotent — re-running only refreshes in place. `./install.sh /path/to/project`
 also appends the method to that project's CLAUDE.md; the bare form is skills-and-engine only.
 

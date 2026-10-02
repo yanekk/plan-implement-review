@@ -136,6 +136,10 @@ The whole of `plans/{slug}/` has to describe one buildable thing. Check:
   a test list, its dependencies. A task with no test list is a green suite waiting to happen.
 - **Every "Done when" is checkable by somebody who was not there**, without asking the
   author and without reading the implementation.
+- **No "Done when" needs the merge.** A step that refreshes an installed copy of the project's
+  own tool, or otherwise makes merged code live, belongs in the finishing rules
+  (`.pir/rules/on-finish.md`), not a task: a worker would run it from its unmerged branch.
+  Moving it out has one right answer; fix it and say so.
 - **Names hold across files.** A file path, a function signature, a data shape or an endpoint
   described in two places is described the same way in both. Two tasks that meet at an
   interface agree on it exactly.
