@@ -1,5 +1,6 @@
 // The single-run drill's scenario tests (single-runs T11, DESIGN §2.1, §2.5, §2.8, §2.10, §2.11): the whole
-// flow as a person meets it, through the real `pir` screen under a pty, from the box to `merged`; and the
+// flow as a person meets it, through the real `pir` screen under a pty, from the box to the finisher's Go
+// and `finished` (single-finisher T07); and the
 // dropped and taken-name runs, from the box too. Each size is its own test file (plan-rig-single-drill-
 // {size}.test.mjs), as the conversation rig's sizes are, so node runs them side by side: a walk waits up to
 // 30 s on the merged check. Not a test file itself.
@@ -10,24 +11,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { BUILDER_MATCH, singleBuilderScript } from './fake/sessions.mjs';
+import { BUILDER_MATCH, FINISHER_GO_QUESTION, FINISHER_SUMMARY, singleBuilderScript } from './fake/sessions.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { SINGLE_HINT } from './list-view.mjs';
 import { writeNotifyConfig } from './notify-config.mjs';
 import { SINGLE_RIG_DROP_ASK, SINGLE_RIG_NAME, SINGLE_RIG_QUESTION, SINGLE_RIG_TAKEN } from './plan-rig.mjs';
 import { DOWN, ENTER, LEFT, RIGHT, UP, boxText, esc, git, headOf, lastLine, rigWithTeardown, typeSettled, until } from './plan-rig-helpers.mjs';
 
-const SKIP_T07 = "skip: T07 — waits for the old 'ready to merge' row, which a single run no longer reaches since single-finisher T05; T07 re-enables it";
-
 // A machine busy with the other test files stretches every wait.
 const SLOW = 60000;
 const TOPIC = 'pir-drill';
-const HANDOFF = `git switch main && git merge pir/${SINGLE_RIG_NAME}`;
-// Where a step row's text starts (pir-tui.mjs stepLine): past that, a frame too narrow for the hand-off
-// line says it again under the rows.
-const STEP_TEXT_AT = 26;
 
 const recordsOf = (rig) => listRecords({ dir: indexDir({ env: rig.env }) });
 // The screen as running prose: a conversation wraps its lines at the frame's width, a different place at
@@ -96,7 +92,7 @@ async function startFromBox(screen, prompt) {
 export function defineSingleDrill([cols, rows]) {
   const at = `${cols}×${rows}`;
 
-  test(`the drill at ${at}: from the box, the builder's question answered, a red round, the view following into the reviewer, ready to merge, the merge by hand, merged; an alert for the question and one for ready`, { timeout: 240000, skip: SKIP_T07 }, async (t) => {
+  test(`the drill at ${at}: from the box, the builder's question answered, a red round, the view following into the reviewer, ready for your go, the finisher's Go, finished; an alert for the question and none for ready to merge`, { timeout: 240000 }, async (t) => {
     const rig = rigWithTeardown(t, { scripts: 'single-asks' });
     askThenRed(rig);
     const ntfy = await fakeNtfy(t, rig);
@@ -122,7 +118,8 @@ export function defineSingleDrill([cols, rows]) {
       assert.match(stepsAsking, /^"fix the typo" · building · pir\/single-[0-9a-f]{4}$/m);
       assert.match(stepsAsking, /^▎ ● build +builder +asking you · a question +\d+:\d\d$/m, 'the clock is whole at every size');
       assert.match(stepsAsking, /^ {2}○ review +reviewer +waits on build$/m);
-      assert.match(stepsAsking, /^ {2}○ merge +— +waits on review$/m);
+      assert.match(stepsAsking, /^ {2}○ sync +— +waits on review$/m);
+      assert.match(stepsAsking, /^ {2}○ merge +— +waits on sync$/m);
       assert.match(stepsAsking, /^● build — asking you; open it \(→\) to answer$/m);
 
       // Back in, the first option sent: the builder builds, pir's tests go red once, its fix is green, and
@@ -135,28 +132,30 @@ export function defineSingleDrill([cols, rows]) {
       assert.match(followed[1], /^review {2}worker \S+/, followed.join('\n'));
       await screen.waitFor(new RegExp(`pir/${SINGLE_RIG_NAME} is reviewed\\.`), SLOW);
 
-      // Ready: amber on the list, the second alert, and the question's alert cleared when it was answered.
-      const listReady = await lit.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ re`), SLOW);
+      // Ready for the go: amber on the list, the question's alert cleared when it was answered, and no
+      // `ready to merge` alert for a run the finisher takes over (single-finisher §2.12; its own alerts are T06's).
+      const listReady = await lit.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +● ready for your go +repo +build ✓ re`), SLOW);
       assert.match(listReady.join('\n'), /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for/);
-      assertAmber(lit, listReady, '● ready to merge');
-      await until(() => ntfy.alerts().length >= 2, 'the ready alert', SLOW);
-      const [asking, ready, ...more] = ntfy.alerts();
-      assert.deepEqual(more, [], 'two alerts: the red round and the reviewer sent none');
-      assert.deepEqual([ready.title, ready.message, ready.tags], [`${SINGLE_RIG_NAME} · ready to merge`, HANDOFF, ['tada']]);
-      assert.deepEqual(ntfy.hits.filter((h) => h.method === 'PUT').map((h) => h.url), [`/${TOPIC}/${asking.sequence_id}/clear`]);
+      assertAmber(lit, listReady, '● ready for your go');
+      const [asking] = ntfy.alerts();
+      await until(() => ntfy.hits.some((h) => h.method === 'PUT' && h.url === `/${TOPIC}/${asking.sequence_id}/clear`), 'the asking alert cleared', SLOW);
+      assert.ok(!ntfy.alerts().some((x) => /ready to merge/.test(x.title)), JSON.stringify(ntfy.alerts()));
       assert.equal(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'main is untouched');
 
-      // The steps view hands the merge over; a frame too narrow for the line on its row says it again.
+      // The steps view: the sync up to date, the finisher waiting for the go, in amber.
+      lit.send(ENTER);
+      const litSteps = await lit.waitFor(/◆ finisher {2}waiting for your go/, SLOW);
+      assertAmber(lit, litSteps, '◆ finisher  waiting for your go');
+      lit.send(LEFT);
       screen.send(LEFT);
       const stepsReady = (await screen.waitFor(/pick a step/, SLOW)).join('\n');
-      assert.match(stepsReady, new RegExp(`^${SINGLE_RIG_NAME} · ready to merge · pir/${SINGLE_RIG_NAME}$`, 'm'));
+      assert.match(stepsReady, new RegExp(`^${SINGLE_RIG_NAME} · ready for your go · pir/${SINGLE_RIG_NAME}$`, 'm'));
       assert.match(stepsReady, /^ {2}✔ build +builder +built +\d+:\d\d$/m);
       assert.match(stepsReady, /^▎ ✔ review +reviewer +reviewed +\d+:\d\d$/m);
-      assert.match(stepsReady, /^ {2}● merge +— +git switch main && git merge pir\/r/m);
-      const narrow = STEP_TEXT_AT + HANDOFF.length > cols;
-      assert.equal(stepsReady.includes(`Hand-off: ${HANDOFF}`), narrow, stepsReady);
-      if (!narrow) assert.match(stepsReady, new RegExp(`— +${esc(HANDOFF)}$`, 'm'));
-      assert.doesNotMatch(stepsReady, /Ctrl\+S/, 'a finished run offers no stop');
+      assert.match(stepsReady, /^ {2}✔ sync +— +up to date · tests green$/m);
+      assert.match(stepsReady, /^ {2}● merge +— +◆ finisher {2}waiting for your go$/m);
+      assert.doesNotMatch(stepsReady, /git switch|Hand-off/, 'the finisher has the merge');
+      assert.match(stepsReady, /Ctrl\+S/, 'the run still runs while it waits');
 
       // The red round, in the builder's conversation: what failed, the round, the untouched starting point.
       screen.send(UP);
@@ -168,19 +167,29 @@ export function defineSingleDrill([cols, rows]) {
       screen.send(LEFT);
       await screen.waitFor(/pick a step/, SLOW);
 
-      // The person's merge, by hand: the run reads merged, and its merge row stops asking for it.
-      git(rig.repoDir, 'merge', '-q', `pir/${SINGLE_RIG_NAME}`);
-      const merged = (await screen.waitFor(new RegExp(`^${SINGLE_RIG_NAME} · merged · pir/${SINGLE_RIG_NAME}$`, 'm'), 45000)).join('\n');
-      assert.match(merged, /^ {2}✔ merge +— +merged$/m);
-      assert.doesNotMatch(merged, /git switch/);
+      // → on merge: the finisher's conversation and its go question; the person's Go ends the run finished.
       screen.send(DOWN);
       screen.send(DOWN);
+      screen.send(DOWN);
+      screen.send(RIGHT);
+      const fin = flat(await screen.waitFor(new RegExp(esc(FINISHER_GO_QUESTION)), SLOW));
+      // At 20 rows the summary above has scrolled off; its steps and the question stay in view.
+      if (rows >= 24) assert.ok(fin.includes(FINISHER_SUMMARY), fin);
+      assert.ok(fin.includes('The steps, once you say go:'), fin);
+      assert.match(fin, /finisher agent \S+ · live/);
+      screen.send(ENTER);
+      await screen.waitFor(/Done: merged and installed\./, SLOW);
+      screen.send(LEFT);
+      const ended = (await screen.waitFor(new RegExp(`^${SINGLE_RIG_NAME} · finished · pir/${SINGLE_RIG_NAME}$`, 'm'), SLOW)).join('\n');
+      assert.match(ended, /^▎ ✔ merge +— +merged$/m);
+      assert.doesNotMatch(ended, /git switch/);
+      assert.notEqual(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'the finisher merged into main');
       screen.send(RIGHT);
       const noted = (await screen.waitFor(/merge has no conversation/, SLOW)).join('\n');
       assert.match(noted, /^merge has no conversation — the branch is already merged\.$/m);
       screen.send(LEFT);
-      const list = (await screen.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +◌ merged +repo +build ✓ re`), SLOW)).join('\n');
-      assert.match(list, /^1 run · 0 running · 1 finished · 0 crashed$/m, 'a merged run no longer waits');
+      const list = (await screen.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +◌ finished +repo +build ✓ re`), SLOW)).join('\n');
+      assert.match(list, /^1 run · 0 running · 1 finished · 0 crashed$/m, 'a finished run no longer waits');
       assert.deepEqual([screen.overflows(), lit.overflows()], [0, 0], 'no line ran past the frame');
     } finally {
       await screen.close();
@@ -208,6 +217,7 @@ export function defineSingleDrill([cols, rows]) {
       assert.match(steps, new RegExp(`^"make it bigger" · finished · ${esc(record.branch)}$`, 'm'));
       assert.match(steps, /^▎ ✗ build +builder +dropped +\d+:\d\d$/m);
       assert.match(steps, /^ {2}○ review +reviewer +not started$/m);
+      assert.match(steps, /^ {2}○ sync +— +not started$/m);
       assert.match(steps, /^ {2}○ merge +— +not started$/m);
       assert.match(steps, /^Dropped: Too big for a single run: use \/plan\.$/m);
       screen.send(LEFT);
@@ -221,19 +231,20 @@ export function defineSingleDrill([cols, rows]) {
     }
   });
 
-  test(`the drill at ${at}: single-taken from the box — pir's check message is in the builder's conversation, and the run is ready under the second name`, { timeout: 120000, skip: SKIP_T07 }, async (t) => {
+  test(`the drill at ${at}: single-taken from the box — pir's check message is in the builder's conversation, and the run reaches the go under the second name`, { timeout: 120000 }, async (t) => {
     const rig = rigWithTeardown(t, { scripts: 'single-taken' });
     const taken = git(rig.repoDir, 'rev-parse', `pir/${SINGLE_RIG_TAKEN}`);
     const screen = rig.openScreen({ cols, rows });
     try {
       await startFromBox(screen, 'fix the typo');
-      await until(() => recordsOf(rig).find((r) => r.slug === SINGLE_RIG_NAME && r.finalState === 'finished'), 'the run finished', SLOW);
+      const stateFile = join(rig.repoDir, 'plans', SINGLE_RIG_NAME, '.parallel', 'single', 'state.json');
+      await until(() => existsSync(stateFile) && JSON.parse(readFileSync(stateFile, 'utf8')).step === 'wait', 'the run waiting for the go', SLOW);
       // Nothing parks this builder, so whether the view was still in its conversation when the reviewer
       // started is a race; either way one ← is the steps view.
       await screen.waitFor(/worker \S+ · (finished|exited), read only/, SLOW);
       screen.send(LEFT);
-      const steps = (await screen.waitFor(/pick a step/, SLOW)).join('\n');
-      assert.match(steps, new RegExp(`^${SINGLE_RIG_NAME} · ready to merge · pir/${SINGLE_RIG_NAME}$`, 'm'));
+      // The finisher reads `preparing` for a frame or two before its go question is up.
+      await screen.waitFor(new RegExp(`^${SINGLE_RIG_NAME} · ready for your go · pir/${SINGLE_RIG_NAME}$`, 'm'), SLOW);
       screen.send(UP);
       screen.send(UP);
       screen.send(RIGHT);
@@ -243,7 +254,7 @@ export function defineSingleDrill([cols, rows]) {
       screen.send(LEFT);
       await screen.waitFor(/pick a step/, SLOW);
       screen.send(LEFT);
-      await screen.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ re`), SLOW);
+      await screen.waitFor(new RegExp(`${SINGLE_RIG_NAME} +single +● ready for your go +repo +build ✓ re`), SLOW);
       assert.equal(git(rig.repoDir, 'rev-parse', `pir/${SINGLE_RIG_TAKEN}`), taken, 'the taken branch is not touched');
       assert.equal(screen.overflows(), 0);
     } finally {

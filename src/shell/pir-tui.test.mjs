@@ -2990,7 +2990,8 @@ test('the steps view of a single run: the header, a row per step painted as a pl
   assert.match(building, /^"Fix the typo in the REA…" · building · pir\/single-ab12$/m);
   assert.match(building, /^▎ ⠙ build +builder +building +1:05$/m);
   assert.match(building, /^ {2}○ review +reviewer +waits on build$/m);
-  assert.match(building, /^ {2}○ merge +— +waits on review$/m);
+  assert.match(building, /^ {2}○ sync +— +waits on review$/m);
+  assert.match(building, /^ {2}○ merge +— +waits on sync$/m);
   assert.match(building, /↑↓ pick a step · → open it · ← back · Ctrl\+S Ctrl\+S stop this run · esc quit/);
 
   const testing = stepsOf(singleRow({ name: 'fix-typo', over: { step: 'build', ...held('built') }, sessions: [sSess('build', 'idle')], extra: TESTS }), { spinnerChar: '⠙' });
@@ -3009,13 +3010,13 @@ test('the steps view of a single run: the header, a row per step painted as a pl
   assert.match(asked, /^● review — asking you; open it \(→\) to answer$/m);
   assert.equal(findSpan(asking, '● review   ').style, 'asking');
   assert.equal(findSpan(asking, '✔ build').style, 'done');
-  assert.deepEqual(asking.map((l) => l.hit?.index).filter((i) => i != null), [0, 1, 2], 'each step row carries its index for the mouse');
+  assert.deepEqual(asking.map((l) => l.hit?.index).filter((i) => i != null), [0, 1, 2, 3], 'each step row carries its index for the mouse');
   assert.deepEqual(hitAt(asking, 3), { kind: 'step', index: 1 });
 });
 
 test('the steps view of a single run: ready shows the hand-off on the merge row, merged says so, dropped gives the reason, and an ended run offers no stop', () => {
   const ready = singleRow({ name: 'fix-typo', state: 'finished', over: { outcome: 'ready' }, merged: false });
-  const frame = buildWatchFrame(ready, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 2 }, columns: 80 });
+  const frame = buildWatchFrame(ready, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 3 }, columns: 80 });
   const text = frameText(frame);
   assert.match(text, /^fix-typo · ready to merge · pir\/fix-typo$/m);
   assert.match(text, /^ {2}✔ build +builder +built$/m);
@@ -3042,6 +3043,7 @@ test('the steps view of a single run: ready shows the hand-off on the merge row,
   assert.match(why, /^"Fix the typo in the REA…" · finished · pir\/single-ab12$/m);
   assert.match(why, /✗ build +builder +dropped$/m);
   assert.match(why, /○ review +reviewer +not started$/m);
+  assert.match(why, /○ sync +— +not started$/m);
   assert.match(why, /○ merge +— +not started$/m);
   assert.match(why, /^Dropped: Too big for a single run: use \/plan\.$/m);
   assert.match(stepsOf(dropped), /^Dropped\.$/m, 'a reason that could not be read');
@@ -3218,4 +3220,95 @@ test('the dashboard loop keeps one merged check across refreshes, and reads a dr
   assert.match(steps, /^Dropped: Nothing to change: the typo is already fixed\.$/m);
   onData('\x1b');
   await again;
+});
+
+// ---- A single run's end on screen (single-finisher T07, DESIGN §2.11). ----
+
+const END0 = initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: [] } }).end;
+const endOver = (over = {}, end = {}) => ({ step: 'wait', ...over, end: { ...END0, tests: 'green', sync: { state: 'up-to-date' }, finisher: 'on', ...end } });
+const finOf = (state, extra = {}) => ({ id: 'fin-sess', logPath: '/c/conversations/finisher-1.ndjson', state, phase: state, goGiven: false, summary: null, steps: [], rulesSource: 'engine', asking: false, ...extra });
+const DONE_SESS = [sSess('build', 'exited', false), sSess('review', 'exited', false)];
+
+test('the list: a single run\'s end states, their words and colours (T07)', () => {
+  const rows = buildDashboard([
+    singleRow({ name: 'in-sync', over: endOver({ step: 'sync' }, { phase: 'merge', finisher: null }), sessions: DONE_SESS }),
+    singleRow({ name: 'for-go', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf('awaiting-go') } }),
+    singleRow({ name: 'stuck', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf('stuck') } }),
+    singleRow({ name: 'merging', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf('finishing') } }),
+    singleRow({ name: 'by-hand', over: endOver({}, { finisher: 'fallback', fallback: 'failed' }), sessions: DONE_SESS }),
+    singleRow({ name: 'red', over: endOver({}, { finisher: 'fallback', fallback: 'red', tests: 'red' }), sessions: DONE_SESS }),
+    singleRow({ name: 'done', state: 'finished', over: endOver({ outcome: 'finished' }) }),
+    singleRow({ name: 'left', state: 'finished', over: endOver({ outcome: 'closed' }) }),
+  ]);
+  const frame = buildListFrame(rows, initialUi(), { columns: 120 });
+  const text = frameText(frame);
+  const expect = [
+    ['in-sync', '● syncing', 'running', 'build ✓ review ✓ sync …'],
+    ['for-go', '● ready for your go', 'your-go', 'build ✓ review ✓ sync ✓ merge …'],
+    ['stuck', '● asking you', 'your-go', 'build ✓ review ✓ sync ✓ merge …'],
+    ['merging', '● finishing', 'running', 'build ✓ review ✓ sync ✓ merge …'],
+    ['by-hand', '● ready to merge', 'your-go', 'build ✓ review ✓ sync ✓ merge …'],
+    ['red', '✗ not ready', 'crashed', 'build ✓ review ✓ sync ✗'],
+    ['done', '◌ finished', 'ended', 'build ✓ review ✓ sync ✓ merge ✓'],
+    ['left', '◌ closed', 'ended', 'build ✓ review ✓ sync ✓ merge ✗'],
+  ];
+  for (const [name, state, style, progress] of expect) {
+    assert.match(text, new RegExp(`^.{2}${name} +single +${state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} +shop +${progress.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'm'), name);
+    assert.equal(findSpan(frame, state).style, style, name);
+  }
+  assert.match(text, /^8 runs · 3 running · 2 finished · 0 crashed · 3 waiting for you$/m);
+  for (const columns of [80, 120]) {
+    for (const line of buildListFrame(rows, initialUi(), { columns })) assert.ok(visibleWidth(line.map((s) => s.text).join('')) <= columns, `${columns}: ${line.map((s) => s.text).join('')}`);
+  }
+});
+
+test('the steps view: the sync row and the finisher\'s merge row, amber while it waits for the go, at 60, 80 and 120 columns (T07)', () => {
+  const view = singleRow({ name: 'fix-typo', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf('awaiting-go'), took: { build: 61_000, review: 30_000 } } });
+  for (const columns of [60, 80, 120]) {
+    const frame = buildWatchFrame(view, { now: NOW, ui: { ...initialUi(), view: 'watch', taskSel: 3 }, columns });
+    const text = frameText(frame);
+    assert.match(text, /^fix-typo · ready for your go · pir\/fix-typo$/m, `${columns}`);
+    assert.match(text, /^ {2}✔ sync +— +up to date · tests green$/m, `${columns}`);
+    assert.match(text, /^▎ ● merge +— +◆ finisher {2}waiting for your go$/m, `${columns}`);
+    assert.equal(findSpan(frame, '● merge').style, 'asking', 'amber, as the build\'s finisher row');
+    assert.equal(findSpan(frame, '✔ sync').style, 'done');
+    for (const line of frame) {
+      const row = line.map((s) => s.text).join('');
+      if (/^(▎| ) /.test(row)) assert.ok(visibleWidth(row) <= columns, `${columns}: ${row}`);
+    }
+  }
+  // A held sync is amber; a red one red, with no merge line anywhere.
+  const heldView = singleRow({ name: 'fix-typo', over: endOver({ step: 'sync' }, { phase: 'prepare', finisher: null, tests: null, sync: null, hold: { reason: 'diverged', text: 'your main and origin/main have split apart', since: 1, nextTry: 2 } }), sessions: DONE_SESS });
+  const heldFrame = buildWatchFrame(heldView, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 120 });
+  assert.match(frameText(heldFrame), /● sync +— +your main and origin\/main have split apart · retrying$/m);
+  assert.equal(findSpan(heldFrame, '● sync').style, 'asking');
+  const redView = singleRow({ name: 'fix-typo', over: endOver({}, { finisher: 'fallback', fallback: 'red', tests: 'red', sync: { state: 'merged' } }), sessions: DONE_SESS });
+  const redFrame = buildWatchFrame(redView, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 60 });
+  const redText = frameText(redFrame);
+  assert.match(redText, /^fix-typo · not ready · pir\/fix-typo$/m);
+  assert.match(redText, /✗ sync +— +not ready · tests red$/m);
+  assert.equal(findSpan(redFrame, '✗ sync').style, 'red');
+  assert.match(redText, /✗ merge +— +not ready · tests red$/m);
+  assert.equal(findSpan(redFrame, '✗ merge').style, 'red');
+  assert.doesNotMatch(redText, /git switch|git merge/);
+  // The fallback wait hands the merge over on the merge row.
+  const fallback = singleRow({ name: 'fix-typo', over: endOver({}, { finisher: 'fallback', fallback: 'failed' }), sessions: DONE_SESS });
+  assert.match(frameText(buildWatchFrame(fallback, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 80 })), /● merge +— +git switch main && git merge pir\/fix-typo$/m);
+});
+
+test('reliveWorker and the step row follow the finisher opened from the merge row by its step id (T07)', () => {
+  const view = (live) => singleRow({ name: 'fix-typo', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf(live ? 'awaiting-go' : 'restarting') } });
+  const ui = { ...initialUi(), view: 'worker', openKey: 'shop__fix-typo', openSlug: 'fix-typo', taskSel: 3, openWorker: { taskId: 'finisher', stepId: 'merge', workerId: 'fin-sess', logPath: '/c/conversations/finisher-1.ndjson', live: false } };
+  assert.equal(reliveWorker(ui, [view(false)]), null);
+  assert.equal(reliveWorker(ui, [view(true)]).openWorker.live, true);
+});
+
+test('listColumns at 60 columns beside `● ready for your go`: REPO gives way so the PROGRESS header and its head are whole (T07)', () => {
+  const rows = buildDashboard([singleRow({ name: 'fix-typo', over: endOver(), sessions: DONE_SESS, extra: { finisher: finOf('awaiting-go') } })]).rows;
+  const c = listColumns(rows, 60);
+  assert.equal(c.repo, 9);
+  const text = frameText(buildListFrame({ rows, counts: {} }, initialUi(), { columns: 60 }));
+  assert.match(text, /PROGRESS/);
+  assert.match(text.split('\n').find((l) => l.includes('fix-typo')).slice(0, 60), /build ✓ re/);
+  assert.equal(listColumns(rows, 80).repo, 12, '80 columns as before');
 });

@@ -300,8 +300,9 @@ test('happy path: setup, builder, checks, tests green, rename, a fresh reviewer,
   assert.equal(snap.finalState, 'finished');
   assert.deepEqual([snap.proc.slug, snap.proc.branch], [name, `pir/${name}`]);
   assert.deepEqual([snap.runState.kind, snap.runState.name, snap.runState.outcome, snap.runState.base, snap.runState.label], ['single', name, 'finished', 'main', null]);
-  // The sync and merge rows are T07's; the snapshot carries what they will read.
-  assert.deepEqual(snap.runState.steps.map((x) => [x.id, x.phase]), [['build', 'done'], ['review', 'done'], ['merge', 'pending']]);
+  // The end rows (single-finisher DESIGN §2.11): the sync done up to date, the merge merged.
+  assert.deepEqual(snap.runState.steps.map((x) => [x.id, x.phase, x.text ?? null]), [['build', 'done', null], ['review', 'done', null], ['sync', 'done', 'up to date · tests green'], ['merge', 'done', 'merged']]);
+  assert.ok(run.snaps.some((x) => x.runState.steps[3].text === '◆ finisher  waiting for your go'), 'the merge row waited for the go');
   assert.equal(snap.runState.end.finisher, 'on');
   assert.ok(run.snaps.some((x) => x.runState.finisher?.state === 'awaiting-go'), 'a snapshot carries the finisher waiting for the go');
   assert.equal(snap.runState.steps[0].worker.logPath, join(moved, 'conversations', 'build-1.ndjson'), 'held paths re-pointed');
@@ -461,7 +462,7 @@ test('dropped: the run finishes dropped, the branch and its body are kept, nothi
   assert.equal(indexOf(s).finalState, 'finished');
   const snap = readSnapshot(s.controlDir);
   assert.equal(snap.finalState, 'finished');
-  assert.deepEqual(snap.runState.steps.map((x) => x.phase), ['failed', 'pending', 'pending']);
+  assert.deepEqual(snap.runState.steps.map((x) => x.phase), ['failed', 'pending', 'pending', 'pending']);
   assert.deepEqual(workersIn(s.controlDir), []);
 });
 
@@ -885,11 +886,11 @@ test('singleRunState: phases per step, testing over the stopped rule, a pending 
 
   let rs = singleRunState(st({ step: 'setup', running: 'setup' }), { label: 'A change' });
   assert.deepEqual([rs.kind, rs.label, rs.name, rs.step, rs.phase, rs.outcome, rs.base], ['single', 'A change', null, 'setup', 'working', null, 'main']);
-  assert.deepEqual(phases(rs), ['building', 'pending', 'pending'], 'setup is part of building');
-  assert.deepEqual(rs.steps.map((x) => x.id), ['build', 'review', 'merge']);
+  assert.deepEqual(phases(rs), ['building', 'pending', 'pending', 'pending'], 'setup is part of building');
+  assert.deepEqual(rs.steps.map((x) => x.id), ['build', 'review', 'sync', 'merge']);
 
   rs = singleRunState(st({}), { sessions: [sess('build', busy)], since: { build: 5 } });
-  assert.deepEqual(phases(rs), ['building', 'pending', 'pending']);
+  assert.deepEqual(phases(rs), ['building', 'pending', 'pending', 'pending']);
   assert.equal(rs.steps[0].since, 5);
   assert.deepEqual(rs.steps[0].worker, { id: 'build-1', live: true, logPath: '/c/build-1.ndjson', cwd: '/w' });
   assert.deepEqual(rs.steps[0].workers, [{ id: 'build-1', role: 'builder', n: 1, logPath: '/c/build-1.ndjson', cwd: '/w' }]);
@@ -912,20 +913,102 @@ test('singleRunState: phases per step, testing over the stopped rule, a pending 
   }
 
   // Rename and review.
-  assert.deepEqual(phases(singleRunState(st({ step: 'rename', name: 'n' }))), ['done', 'pending', 'pending']);
+  assert.deepEqual(phases(singleRunState(st({ step: 'rename', name: 'n' }))), ['done', 'pending', 'pending', 'pending']);
   rs = singleRunState(st({ step: 'review', name: 'n' }), { sessions: [sess('build', { state: 'exited' }, false), sess('review', busy)], took: { build: 1200 } });
-  assert.deepEqual(phases(rs), ['done', 'reviewing', 'pending']);
+  assert.deepEqual(phases(rs), ['done', 'reviewing', 'pending', 'pending']);
   assert.equal(rs.steps[0].tookMs, 1200);
   assert.equal(rs.steps[1].workers[0].role, 'reviewer');
   assert.equal(singleRunState(st({ step: 'review', name: 'n', running: 'tests' }), { sessions: [sess('review', stopped)] }).steps[1].phase, 'testing');
   assert.equal(singleRunState(st({ step: 'review', name: 'n' }), { sessions: [sess('review', stopped)] }).steps[1].asking, 'question');
 
   // The outcomes. A finished run keeps the step it ended in.
-  assert.deepEqual(phases(singleRunState(st({ step: 'review', name: 'n', outcome: 'ready' }))), ['done', 'done', 'ready']);
-  assert.deepEqual(phases(singleRunState(st({ outcome: 'dropped' }))), ['failed', 'pending', 'pending']);
-  assert.deepEqual(phases(singleRunState(st({ step: 'review', name: 'n', outcome: 'dropped' }))), ['done', 'failed', 'pending']);
+  assert.deepEqual(phases(singleRunState(st({ step: 'review', name: 'n', outcome: 'ready' }))), ['done', 'done', 'pending', 'ready']);
+  assert.deepEqual(phases(singleRunState(st({ outcome: 'dropped' }))), ['failed', 'pending', 'pending', 'pending']);
+  assert.deepEqual(phases(singleRunState(st({ step: 'review', name: 'n', outcome: 'dropped' }))), ['done', 'failed', 'pending', 'pending']);
   rs = singleRunState(st({ step: 'review', name: 'n', outcome: 'ready', running: 'tests' }), { sessions: [sess('review', stopped, false)] });
   assert.deepEqual([rs.phase, rs.steps[1].asking], ['working', null], 'a finished run neither tests nor asks');
+});
+
+test('singleRunState: the sync row for each phase, in the words of single-finisher DESIGN §2.11 (T07)', () => {
+  const st = (over, end = {}) => {
+    const base = initialSingleState({ id: ID, base: 'main', baseSha: 'abc', commands: { setup: [], test: ['true'] } });
+    return { ...base, name: 'n', step: 'sync', ...over, end: { ...base.end, ...end } };
+  };
+  const sess = (step, activity, live = true, n = 1) => ({ id: `${step}-${n}`, step, n, logPath: `/c/${step}-${n}.ndjson`, cwd: '/w', live, activity });
+  const busy = { state: 'busy', background: [] };
+  const sync = (state, extra) => singleRunState(state, extra).steps[2];
+  const cell = (x) => [x.id, x.phase, x.text];
+
+  assert.deepEqual(cell(sync(st({ step: 'build' }))), ['sync', 'pending', 'waits on review']);
+  assert.deepEqual(cell(sync(st({ step: 'review' }))), ['sync', 'pending', 'waits on review']);
+  assert.deepEqual(cell(sync(st({ step: 'review', outcome: 'dropped' }))), ['sync', 'pending', 'not started']);
+  assert.deepEqual(cell(sync(st({}, { phase: 'prepare' }))), ['sync', 'working', 'bringing in main']);
+  assert.deepEqual(cell(sync(st({}, { phase: 'merge' }))), ['sync', 'working', 'bringing in main']);
+  // A held sync names holdText's reason once, with `retrying` said once.
+  assert.deepEqual(cell(sync(st({}, { phase: 'prepare', hold: { reason: 'fetch-failed', text: "can't reach origin, retrying", since: 1, nextTry: 2 } }))), ['sync', 'held', "can't reach origin · retrying"]);
+  assert.deepEqual(cell(sync(st({}, { phase: 'prepare', hold: { reason: 'diverged', text: 'your main and origin/main have split apart', since: 1, nextTry: 2 } }))), ['sync', 'held', 'your main and origin/main have split apart · retrying']);
+  // A helper at work, its session the row's; a helper asking the person.
+  let rs = singleRunState(st({ live: true }, { phase: 'resolving' }), { sessions: [sess('resolve', busy)], since: { resolve: 7 } });
+  assert.deepEqual([...cell(rs.steps[2]), rs.steps[2].since, rs.steps[2].role, rs.steps[2].worker.id], ['sync', 'working', 'resolving a clash', 7, 'resolve', 'resolve-1']);
+  rs = singleRunState(st({ live: true }, { phase: 'fixing' }), { sessions: [sess('resolve', { state: 'exited' }, false), sess('fix', busy)] });
+  assert.deepEqual([...cell(rs.steps[2]), rs.steps[2].worker.id], ['sync', 'working', 'fixing tests', 'fix-1']);
+  assert.deepEqual(rs.steps[2].workers.map((w) => [w.id, w.role]), [['resolve-1', 'resolve'], ['fix-1', 'fix']]);
+  rs = singleRunState(st({ live: true }, { phase: 'fixing' }), { sessions: [sess('fix', { state: 'permission', background: [] })], stoppedAt: { fix: 9 } });
+  assert.deepEqual([...cell(rs.steps[2]), rs.steps[2].asking, rs.steps[2].stoppedAt], ['sync', 'asking', 'asking you · allow a command?', 'permission', 9]);
+  // pir's tests, with their clock.
+  rs = singleRunState(st({ running: 'tests' }, { phase: 'testing' }), { running: { kind: 'tests', since: 44 } });
+  assert.deepEqual([...cell(rs.steps[2]), rs.steps[2].testingSince], ['sync', 'testing', 'testing…', 44]);
+  // Settled: green up to date or brought in, red with the reason.
+  assert.deepEqual(cell(sync(st({ step: 'wait' }, { tests: 'green', sync: { state: 'up-to-date', baseSha: 'b', files: [] } }))), ['sync', 'done', 'up to date · tests green']);
+  assert.deepEqual(cell(sync(st({ step: 'wait' }, { tests: 'green', sync: { state: 'merged', baseSha: 'b', files: [] } }))), ['sync', 'done', 'main brought in · tests green']);
+  assert.deepEqual(cell(sync(st({ step: 'wait' }, { tests: 'green', sync: { state: 'resolved', baseSha: 'b', files: ['a'] } }))), ['sync', 'done', 'main brought in · tests green']);
+  assert.deepEqual(cell(sync(st({ step: 'wait' }, { tests: 'red', sync: { state: 'merged', baseSha: 'b', files: [] } }))), ['sync', 'failed', 'not ready · tests red']);
+  assert.deepEqual(cell(sync(st({ step: 'wait' }, { tests: 'red', sync: { state: 'unresolved', baseSha: 'b', files: ['a'] } }))), ['sync', 'failed', 'not ready · clash unresolved']);
+  // A finished run keeps what its sync settled; one ended mid-sync never finished it.
+  assert.deepEqual(cell(sync(st({ step: 'wait', outcome: 'finished' }, { tests: 'green', sync: { state: 'up-to-date' } }))), ['sync', 'done', 'up to date · tests green']);
+  assert.deepEqual(cell(sync(st({ step: 'sync', outcome: 'merged' }, { phase: 'prepare' }))), ['sync', 'pending', 'not started']);
+});
+
+test('singleRunState: the merge row for each finisher phase uses the build finisher row\'s words; fallback, closed and red (T07)', () => {
+  const st = (over, end = {}) => {
+    const base = initialSingleState({ id: ID, base: 'main', baseSha: 'abc', commands: { setup: [], test: ['true'] } });
+    return { ...base, name: 'n', step: 'wait', ...over, end: { ...base.end, tests: 'green', ...end } };
+  };
+  const view = (state, extra = {}) => ({ id: 'fin-1', logPath: '/c/finisher-1.ndjson', state, phase: state, goGiven: false, summary: null, steps: [], rulesSource: 'engine', asking: false, ...extra });
+  const merge = (state, finisher = null) => singleRunState(state, { finisher }).steps[3];
+  const cell = (x) => [x.id, x.phase, x.text];
+
+  assert.deepEqual(cell(merge(st({ step: 'review' }))), ['merge', 'pending', 'waits on sync']);
+  assert.deepEqual(cell(merge(st({ step: 'sync' }, { tests: null }))), ['merge', 'pending', 'waits on sync']);
+  const words = {
+    preparing: '◆ finisher  preparing',
+    'awaiting-go': '◆ finisher  waiting for your go',
+    finishing: '◆ finisher  finishing',
+    stuck: '◆ finisher  stuck · needs you',
+    done: '◆ finisher  done',
+    restarting: '◆ finisher  restarting',
+    'given-up': '◆ finisher  given up',
+  };
+  for (const [state, text] of Object.entries(words)) {
+    const m = merge(st({}, { finisher: 'on' }), view(state));
+    assert.deepEqual(cell(m), ['merge', 'finisher', text], state);
+    assert.equal(m.finisher.state, state);
+    assert.deepEqual(m.worker, { id: 'fin-1', live: state !== 'restarting' && state !== 'given-up', logPath: '/c/finisher-1.ndjson' }, state);
+  }
+  // A request parked for the person reads asking you in preparing and finishing, as in a build.
+  assert.equal(merge(st({}, { finisher: 'on' }), view('finishing', { asking: true })).text, '◆ finisher  asking you');
+  // On, but not yet held by this program (a resume): its row, with no session to open yet.
+  assert.deepEqual([...cell(merge(st({}, { finisher: 'on' }))), merge(st({}, { finisher: 'on' })).worker], ['merge', 'finisher', '◆ finisher  preparing', null]);
+  // A re-sync under the finisher keeps its row.
+  assert.equal(merge(st({ step: 'sync' }, { finisher: 'on' }), view('preparing')).phase, 'finisher');
+  // The fallback wait and a closed run hand the merge to the person; a red wait offers none.
+  assert.deepEqual(cell(merge(st({}, { finisher: 'fallback', fallback: 'failed' }))), ['merge', 'ready', 'git switch main && git merge pir/n']);
+  assert.deepEqual(cell(merge(st({ outcome: 'closed' }, { finisher: 'on' }))), ['merge', 'ready', 'git switch main && git merge pir/n']);
+  assert.deepEqual(cell(merge(st({}, { tests: 'red', finisher: 'fallback', fallback: 'red' }))), ['merge', 'failed', 'not ready · tests red']);
+  assert.deepEqual(cell(merge(st({}, { tests: 'red', sync: { state: 'unresolved', baseSha: 'b', files: ['a'] } }))), ['merge', 'failed', 'not ready · clash unresolved']);
+  for (const outcome of ['finished', 'merged']) assert.deepEqual(cell(merge(st({ outcome }, { finisher: 'on' }))), ['merge', 'done', 'merged'], outcome);
+  assert.deepEqual(cell(merge(st({ step: 'review', outcome: 'ready' }))), ['merge', 'ready', 'git switch main && git merge pir/n'], 'a legacy ready');
+  assert.deepEqual(cell(merge(st({ step: 'build', outcome: 'dropped' }))), ['merge', 'pending', 'not started']);
 });
 
 test('formatSingleSetupNote: the failing line, its output, the log, and the setup lines to run', () => {

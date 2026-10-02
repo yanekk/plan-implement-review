@@ -9,6 +9,7 @@
 
 import { mergeLine } from './coordinator-brief.mjs';
 import { planStepState, runDisplayState, singleStepState } from './dashboard.mjs';
+import { finisherEntry, finisherRow } from './display.mjs';
 import { analyzeParallelism } from './parallelism.mjs';
 import { parseProgress } from './progress.mjs';
 
@@ -17,6 +18,8 @@ const ROLE = { plan: 'planner', review: 'reviewer', build: '—' };
 
 // The label of an asking step, the same words workerActivity's kinds get on a task row (display.mjs).
 const ASKING_TEXT = { questions: 'asking you · a question', question: 'asking you · a question', permission: 'asking you · allow a command?', command: 'asking you · run a command' };
+// askingText(kind) → the words of a step asking the person; a single run's sync row reads them too.
+export const askingText = (kind) => ASKING_TEXT[kind] ?? ASKING_TEXT.question;
 
 // What a done, failed or pending step says. A pending step names what it waits on.
 const DONE_TEXT = { plan: 'plan written', review: 'reviewed' };
@@ -92,7 +95,7 @@ export function buildPlanDisplay(runState, { now = null, record = null, state = 
     const asking = s?.asking ?? (phase === 'asking' ? 'question' : null);
     const until = asking ? s?.stoppedAt ?? now : now;
     const clock = s?.since != null && until != null ? Math.max(0, until - s.since) : null;
-    if (asking) return { ...base, kind: 'asking', text: ASKING_TEXT[asking] ?? ASKING_TEXT.question, clock };
+    if (asking) return { ...base, kind: 'asking', text: askingText(asking), clock };
     // No snapshot yet: the program has not named its planner (§2.12's `starting the planner…`).
     return { ...base, kind: 'active', text: rs ? ACTIVE_TEXT[id] : PENDING_TEXT.plan, clock };
   };
@@ -116,13 +119,20 @@ export function buildPlanDisplay(runState, { now = null, record = null, state = 
   return { header, rows, footer, go };
 }
 
-// --- A single run's steps view (single-runs DESIGN §2.8) -------------------------------------------------
+// --- A single run's steps view (single-runs DESIGN §2.8; single-finisher DESIGN §2.11) -------------------
 
-const SINGLE_ROLE = { build: 'builder', review: 'reviewer', merge: '—' };
+const SINGLE_ROLE = { build: 'builder', review: 'reviewer', sync: '—', merge: '—' };
 const SINGLE_DONE_TEXT = { build: 'built', review: 'reviewed' };
-const SINGLE_PENDING_TEXT = { build: 'starting the builder…', review: 'waits on build', merge: 'waits on review' };
+const SINGLE_PENDING_TEXT = { build: 'starting the builder…', review: 'waits on build' };
 const SINGLE_ACTIVE_TEXT = { build: 'building', review: 'reviewing' };
-const SINGLE_HEADER_STATE = { 'ready-to-merge': 'ready to merge' };
+const SINGLE_HEADER_STATE = {
+  'ready-to-merge': 'ready to merge',
+  'ready-for-your-go': 'ready for your go',
+  'not-ready': 'not ready',
+};
+// The steps view's row kind for each of the finisher row's kinds (display.mjs finisherRow): amber while it
+// waits on the person, done once done, idle while it is down, else at work.
+const FINISHER_STEP_KIND = { 'finisher-asking': 'asking', 'finisher-done': 'done', 'finisher-idle': 'pending', finisher: 'active' };
 
 // buildSingleDisplay(runState, { now, record, state, merged, dropped }) →
 //   { header, rows: [{ id, role, kind, text, clock }], footer }
@@ -135,10 +145,12 @@ const SINGLE_HEADER_STATE = { 'ready-to-merge': 'ready to merge' };
 //   dropped  — the body of the `dropped` report, which the shell reads from state.json (the snapshot does
 //              not carry it); null when unknown
 //
-//   rows   — build, review, merge, shaped as buildPlanDisplay's. A step whose tests run reads `testing…`
-//            with the test run's clock; a step back at work after a red run reads `tests red · round {n}`.
-//            The merge row waits on review, then carries the hand-off line (kind `asking`: it is the
-//            person's to run), then `merged`.
+//   rows   — build, review, sync, merge, shaped as buildPlanDisplay's. A step whose tests run reads
+//            `testing…` with the test run's clock; a step back at work after a red run reads
+//            `tests red · round {n}`. The sync and merge rows carry singleRunState's words (single-finisher
+//            DESIGN §2.11): a held sync is kind `held` (amber), a red one `failed`; the merge row is the
+//            finisher's while it is on, coloured as its pinned row is in a build, the hand-merge line (kind
+//            `asking`: it is the person's to run) on the fallback wait and after a close, then `merged`.
 //   footer — null | { kind: 'asking', step } | { kind: 'ready', line } | { kind: 'dropped', reason }
 //            | { kind: 'stale', state }. `ready` repeats the hand-off line for a frame too narrow to show
 //            it whole on the merge row.
@@ -150,51 +162,86 @@ export function buildSingleDisplay(runState, { now = null, record = null, state 
   const name = record?.slug ?? rs?.name ?? null;
   const branch = record?.branch ?? (name ? `pir/${name}` : null);
   const base = rs?.base ?? record?.baseBranch ?? null;
-  const headerState = display === 'asking-you' ? singleStepState(rs) : SINGLE_HEADER_STATE[display] ?? display ?? '';
+  const headerState = display === 'asking-you' ? singleHeaderAsking(rs) : SINGLE_HEADER_STATE[display] ?? display ?? '';
   const header = { name: label ? `"${label}"` : name ?? '', state: headerState, branch };
 
   const steps = rs?.steps ?? [];
   const outcome = rs?.outcome ?? null;
-  // The hand-off (base-branch's text): named by the branch, which after the rename is pir/{name}.
-  const line = outcome === 'ready' && base && branch ? mergeLine(base, branch.replace(/^pir\//, '')) : null;
+  // The hand-off (base-branch's text): named by the branch, which after the rename is pir/{name}. A legacy
+  // `ready` run's snapshot has no merge text; it is made here, as it always was.
+  const legacyLine = outcome === 'ready' && base && branch ? mergeLine(base, branch.replace(/^pir\//, '')) : null;
+  const elapsed = (from, until) => (from != null && until != null ? Math.max(0, until - from) : null);
+  // A working, testing, held or asking step of a run whose program is gone is stale, as a planning step is.
+  const stale = (cell) => ({ ...cell, kind: 'failed', text: state === 'stopped' ? 'stopped' : 'crashed', clock: null });
 
   const row = (id) => {
     const s = steps.find((st) => st.id === id) ?? null;
     const cell = { id, role: SINGLE_ROLE[id] };
     if (id === 'merge') {
-      if (display === 'merged') return { ...cell, kind: 'done', text: 'merged', clock: null };
-      if (line) return { ...cell, kind: 'asking', text: line, clock: null };
-      return { ...cell, kind: 'pending', text: outcome ? 'not started' : SINGLE_PENDING_TEXT.merge, clock: null };
+      // A closed run keeps its `closed` state; once the person's merge lands its row stops offering one.
+      if (display === 'merged' || (outcome === 'closed' && merged)) return { ...cell, kind: 'done', text: 'merged', clock: null };
+      const phase = s?.phase ?? (legacyLine ? 'ready' : 'pending');
+      const text = legacyLine ?? s?.text ?? null;
+      if (phase === 'done') return { ...cell, kind: 'done', text: text ?? 'merged', clock: null };
+      if (phase === 'failed') return { ...cell, kind: 'failed', text, clock: null };
+      if (phase === 'ready' && text) return { ...cell, kind: 'asking', text, clock: null };
+      if (phase === 'finisher') {
+        if (!alive) return stale(cell);
+        const kind = FINISHER_STEP_KIND[finisherRow(finisherEntry(s.finisher ?? {})).kind] ?? 'active';
+        return { ...cell, kind, text, clock: null };
+      }
+      return { ...cell, kind: 'pending', text: text ?? (outcome ? 'not started' : 'waits on sync'), clock: null };
+    }
+    if (id === 'sync') {
+      const phase = s?.phase ?? 'pending';
+      const text = s?.text ?? (outcome ? 'not started' : 'waits on review');
+      if (phase === 'done') return { ...cell, kind: 'done', text, clock: null };
+      if (phase === 'failed') return { ...cell, kind: 'failed', text, clock: null };
+      if (phase === 'pending') return { ...cell, kind: 'pending', text, clock: null };
+      if (!alive) return stale(cell);
+      if (phase === 'asking') return { ...cell, role: s.role ?? cell.role, kind: 'asking', text, clock: elapsed(s.since, s.stoppedAt ?? now) };
+      if (phase === 'held') return { ...cell, kind: 'held', text, clock: null };
+      if (phase === 'testing') return { ...cell, kind: 'active', text, clock: elapsed(s.testingSince, now) };
+      return { ...cell, role: s.since != null ? s.role ?? cell.role : cell.role, kind: 'active', text, clock: elapsed(s.since, now) };
     }
     const phase = s?.phase ?? (id === 'build' && !rs ? 'building' : 'pending');
     if (phase === 'done') return { ...cell, kind: 'done', text: SINGLE_DONE_TEXT[id], clock: s?.tookMs ?? null };
     if (phase === 'failed') return { ...cell, kind: 'failed', text: 'dropped', clock: s?.tookMs ?? null };
     if (phase === 'pending') return { ...cell, kind: 'pending', text: outcome ? 'not started' : SINGLE_PENDING_TEXT[id], clock: null };
-    // A working, testing or asking step of a run whose program is gone is stale, as a planning step is.
-    if (!alive) return { ...cell, kind: 'failed', text: state === 'stopped' ? 'stopped' : 'crashed', clock: null };
-    const elapsed = (from, until) => (from != null && until != null ? Math.max(0, until - from) : null);
+    if (!alive) return stale(cell);
     const asking = s?.asking ?? (phase === 'asking' ? 'question' : null);
-    if (asking) return { ...cell, kind: 'asking', text: ASKING_TEXT[asking] ?? ASKING_TEXT.question, clock: elapsed(s?.since, s?.stoppedAt ?? now) };
+    if (asking) return { ...cell, kind: 'asking', text: askingText(asking), clock: elapsed(s?.since, s?.stoppedAt ?? now) };
     // The session waits on pir here, not on the person (§2.9), and the clock is the test run's own.
     if (phase === 'testing') return { ...cell, kind: 'active', text: 'testing…', clock: elapsed(s?.testingSince ?? s?.since, now) };
     const round = s?.round ?? 0;
     const text = !rs ? SINGLE_PENDING_TEXT.build : round > 0 ? `tests red · round ${round}` : SINGLE_ACTIVE_TEXT[id];
     return { ...cell, kind: 'active', text, clock: elapsed(s?.since, now) };
   };
-  const rows = ['build', 'review', 'merge'].map(row);
+  const rows = ['build', 'review', 'sync', 'merge'].map(row);
+  // The merge row's hand-off line, when it shows one.
+  const mergeRowNow = rows[3];
+  const line = mergeRowNow.kind === 'asking' && mergeRowNow.text?.startsWith('git switch ') ? mergeRowNow.text : null;
 
   let footer = null;
   if (!alive && state !== 'finished') {
     footer = { kind: 'stale', state };
   } else if (state === 'finished') {
     if (outcome === 'dropped') footer = { kind: 'dropped', reason: firstLine(dropped) };
-    else if (outcome !== 'ready') footer = { kind: 'stale', state };
-    else if (display !== 'merged' && line) footer = { kind: 'ready', line };
+    else if (outcome === 'ready' || outcome === 'closed') footer = line ? { kind: 'ready', line } : null;
+    else if (outcome !== 'finished' && outcome !== 'merged') footer = { kind: 'stale', state };
   } else {
     const asking = rows.find((r) => r.kind === 'asking' && r.id !== 'merge');
     if (asking) footer = { kind: 'asking', step: asking.id };
+    else if (line) footer = { kind: 'ready', line };
   }
   return { header, rows, footer };
+}
+
+// The header's state while a single run asks: the step at work, as the planning run's header names it.
+function singleHeaderAsking(rs) {
+  if (rs?.step === 'sync') return 'syncing';
+  if (rs?.step === 'wait') return 'asking you';
+  return singleStepState(rs);
 }
 
 // The first non-empty line of a report body, or null.
