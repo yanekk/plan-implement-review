@@ -37,16 +37,25 @@ export function rulesSourceWords(source) {
 // target branch, the person's main checkout (where the merge happens), the report and the status folder.
 // `base` is the run's recorded base (`pirBase`): the target is a fact of the run, so it is stated here
 // rather than left to the rules file, which may name another branch.
-export function finisherOpening({ slug, branch, base, rulesPath, rulesSource, statusDir, reportPath, mainCheckout }) {
+//
+// `kind` 'single' (single-finisher DESIGN §2.7) is a single run's finisher: there is no plan and no
+// REPORT.md, so `Plan:` and `Report:` are dropped and `Change asked for:` (the run's prompt.md) stands in
+// for the report. 'build', the default, is the build's text byte for byte.
+export function finisherOpening({
+  kind = 'build', slug, branch, base, rulesPath, rulesSource, statusDir, reportPath, promptPath, mainCheckout,
+}) {
+  const single = kind === 'single';
   return [
-    `Invoke the pir-finisher skill and follow it. You are the finisher of the parallel build of plan \`${slug}\`: its branch is ready to merge into \`${base}\`.`,
-    `Plan: ${slug}`,
+    single
+      ? `Invoke the pir-finisher skill and follow it. You are the finisher of the single run \`${slug}\`: a small change, built and reviewed, whose branch is ready to merge into \`${base}\`.`
+      : `Invoke the pir-finisher skill and follow it. You are the finisher of the parallel build of plan \`${slug}\`: its branch is ready to merge into \`${base}\`.`,
+    ...(single ? [] : [`Plan: ${slug}`]),
     `Branch: ${branch}`,
     `Target branch: ${base}`,
     `Rules file: ${rulesPath}`,
     `Rules source: ${rulesSourceWords(rulesSource)}`,
     `Main checkout: ${mainCheckout}`,
-    `Report: ${reportPath}`,
+    single ? `Change asked for: ${promptPath}` : `Report: ${reportPath}`,
     `Status folder: ${statusDir}`,
     'You may only look until the person says go: pir refuses anything that changes a file, a branch or the world. ' +
       'Prepare the steps the rules ask for, write a `ready` status into the status folder, then ask the go question: ' +
