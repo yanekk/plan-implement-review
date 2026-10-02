@@ -124,8 +124,13 @@ test('the failed-check message it tells a session to recognise is the one decide
   assert.ok(sent.text.startsWith(`${before}\`built\`${after}`), `pir sends: ${sent.text}`);
 });
 
+// The helpers' kinds (single-finisher DESIGN §2.3). parseSingleReport learns them in single-finisher T03;
+// this file checks their exact text, and T05 runs them through the parser once both have landed.
+const HELPER_KINDS = ['resolved', 'fixed'];
+const isHelperHeader = (h) => HELPER_KINDS.some((k) => h === `[pir:v1 kind=${k} single=fix-readme-typo]`);
+
 test('every report header it shows parses with parseSingleReport, and it shows exactly the three kinds', () => {
-  const headers = reportHeaders(SKILL);
+  const headers = reportHeaders(SKILL).filter((h) => !isHelperHeader(h));
   assert.ok(headers.length >= 3, 'the skill shows fewer than three report headers');
   const seen = new Map();
   for (const h of headers) {
@@ -243,6 +248,39 @@ test('after reporting it waits and changes nothing; dropping needs the person\'s
   assert.match(drop, /recommend they plan it with `\/plan`/);
   assert.match(drop, /nothing to change/);
   assert.match(drop, /says what was found/);
+});
+
+test('the helpers: both roles keyed on the phrases helperInstruction uses, their two headers exactly, and the base untouched (single-finisher §2.3)', () => {
+  const s = flat(section('The helpers (resolve and fix)'));
+  // The opening phrases T03's helperInstruction writes; T05 cross-checks them against the function.
+  assert.ok(s.includes('"as the resolve helper of pir/{name}"'));
+  assert.ok(s.includes('"as the fix helper of pir/{name}"'));
+  assert.ok(flat(SKILL.slice(0, SKILL.indexOf('\n## '))).includes('as the resolve helper of pir/{name}'), 'the opening names the resolve role');
+  assert.ok(flat(SKILL.slice(0, SKILL.indexOf('\n## '))).includes('as the fix helper of pir/{name}'), 'the opening names the fix role');
+  // Both headers, exactly, and no others in the section.
+  const headers = reportHeaders(section('The helpers (resolve and fix)'));
+  assert.deepEqual(headers.sort(), ['[pir:v1 kind=fixed single=fix-readme-typo]', '[pir:v1 kind=resolved single=fix-readme-typo]']);
+  assert.match(s, /Never merge into, rebase onto, push or switch to the base branch/);
+  assert.match(s, /Never start a merge, and never abort one/);
+  assert.match(s, /`git add` each one, then `git commit --no-edit`/);
+  assert.match(s, /without undoing the change or the merged base/);
+  assert.match(s, /report `fixed` anyway/);
+  assert.match(s, /ask the person in this conversation and wait/);
+  assert.match(s, /A helper never reports `dropped`/);
+  assert.match(s, /change nothing until pir's word arrives/);
+  // The shared sections a helper is told to read must not speak only to the builder and reviewer.
+  assert.match(flat(section('After you report')), /After any report you send/);
+  assert.match(flat(section('After you report')), /A helper gets only the first two: it has no red rounds/);
+  assert.match(flat(section('Dropping')), /The builder or the reviewer may report it \(a helper never\)/);
+});
+
+test('what a single run is: pir hands the branch to the finisher, it no longer shows a merge command (single-finisher §2.4)', () => {
+  const s = flat(section('What a single run is'));
+  assert.match(s, /hands the branch to the finisher/);
+  assert.match(s, /asks the person `Go`/);
+  for (const stale of [/shows the person the command that merges/, /merges by hand/, /shows the merge command/, /the person's merge handles it/]) {
+    assert.doesNotMatch(flat(SKILL), stale);
+  }
 });
 
 test('install.sh installs pir-single with the other skills', () => {
