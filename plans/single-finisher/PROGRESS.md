@@ -23,10 +23,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | single-finisher-alerts | T05 | ✅ | |
 | T07 | single-finisher-screen | T05 | ✅ | |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
-| T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
+| T09 | single-finisher-docs | T05, T06, T07 | 🔍 | single-runs.md: sync, helpers, finisher, wait, base watch, reports, rows, alerts, resume, control folder, limits; finisher.md § On a single run; human-flow, control-folder, detached-runs, docs/README, README updated. single-docs.test.mjs +4 tests (11). No deviations. |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T09
 
 ## Blocked on the user
 

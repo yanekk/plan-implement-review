@@ -6,7 +6,8 @@ holds, which reads the project's finishing rules, prepares every step without ru
 the person one fixed question, and after their `Go` carries the steps out: the merge into the run's base
 branch, and
 whatever the project does after a merge (an install, a check). The run then ends. The person never has
-to leave `pir` or their phone to finish a build.
+to leave `pir` or their phone to finish a build. A single run (`@repo/single`) ends with the same
+finisher ([On a single run](#on-a-single-run)).
 
 The go is the person's and only the person's. The coordinator agent cannot give it, the finisher cannot
 give it to itself, and `pir` recognises it only as the person's answer to that one question. Everything
@@ -44,6 +45,31 @@ agent's row is gone from then on; its ledger, report and conversation file stay 
 The finisher's session is named `{repo} / {slug} / finisher`, runs in the feature worktree, in
 `permissionMode: 'default'`, and its Remote Control is on for its whole session (unless
 `PARALLEL_REMOTE=0`), since everything it asks is the person's.
+
+### On a single run
+
+Every single run gets the finisher, with no setting to turn it off; a `dropped` run gets none. After
+the review the single-run program brings the base into `pir/{name}` and tests it, holding a resolve or
+fix helper as a build's end does, and on the pass that sync settles green it starts the finisher
+(`startTheFinisher` in `single-run.mjs`; [single-runs.md](single-runs.md#the-finisher)). A sync that
+settles red waits `not ready` instead, as a red build does. The differences, all from `kind: 'single'`
+passed to `startFinisher`:
+
+- The session is named `{repo} / {name} / single / finisher`, matching the run's other sessions.
+- It runs in the run's worktree `.claude/worktrees/pir-{name}`, and its files are under the run's control
+  folder, `plans/{name}/.parallel/single/finisher/`, its conversation in
+  `plans/{name}/.parallel/single/conversations/`, and its log lines in that folder's `run.log` rather
+  than `control.log`.
+- The opening instruction (`finisherOpening` with `kind: 'single'`) begins `You are the finisher of the
+  single run `{name}`: a small change, built and reviewed, whose branch is ready to merge into `{base}`.`,
+  has no `Plan:` or `Report:` line, and adds `Change asked for: {prompt.md}`. The skill tells it to read
+  that file and `git log --oneline {target}..pir/{name}` in place of `REPORT.md`.
+- There is no coordinator agent: the run's person inbox is wrapped with `withAgent(holder.platform, () =>
+  finisher)`, so the person's answers in `pir` reach the finisher and the go is recognised as in builds.
+
+The rules file, the target branch, the fence, the phases, the go, the status files, the ledger, the
+restart budget and the alerts are the build's, unchanged. The single run's own end, outcomes (`finished`,
+`closed`, `merged`) and fallback are in [single-runs.md](single-runs.md#the-finisher).
 
 ## The target branch
 
@@ -304,7 +330,8 @@ Each alert's tap opens the finisher's chat (its Remote Control link), sent once 
 after 20 s without one; the gave-up alert carries no link. The ready and stuck alerts are
 cleared when the phase leaves them; `awaiting-go → stuck` is a new alert. The `{slug} · ready to merge`
 end alert is not sent for a run the finisher takes over; a red run, a `--no-coordinator` run and a run
-whose finisher failed to start still send today's end alert. See
+whose finisher failed to start still send today's end alert. On a single run `{slug}` is the run's name,
+and a run whose finisher failed to start sends `{name} · ready to merge` ([single-runs.md](single-runs.md#phone-alerts)). See
 [human-flow.md](human-flow.md#phone-alerts--pir-notify).
 
 ## On screen
@@ -331,7 +358,9 @@ and the person answers `Go` in the picker. The watch hint reads `c finisher`.
 The dashboard lists the run as `● ready for your go` in amber, counted in `waiting for you`, while the
 finisher waits for the go and no task is asking (`runDisplayState` in `dashboard.mjs`); `asking you`
 while it is stuck or holding a request; `running` in its other phases. A run whose finisher gave up or
-failed to start reads `ready to merge` again.
+failed to start reads `ready to merge` again. A single run shows the same words in its steps view's
+`merge` row and lists the same states, plus `● finishing` and `◌ closed`
+([single-runs.md](single-runs.md#on-the-screen)).
 
 ## The record
 
@@ -384,8 +413,11 @@ All under the run's gitignored control folder ([control-folder.md](control-folde
   branch then waits without one. A green branch is handed over again (`handOver`): the finisher is
   resumed, and one that gave up within the last hour gives up again at once and the run falls back to
   `ready to merge`.
-- **The finisher's session is not in `workers.json`**, like the coordinator agent's: a coordinator that
-  is SIGKILLed leaves it running. Its `claude` process carries `--name '{repo} / {slug} / finisher'`,
-  so `ps -ax -o pid,command | grep '/ finisher'` finds it for a `kill`.
+- **The finisher's session is not in `workers.json`**, like the coordinator agent's: a coordinator (or
+  a single-run program) that is SIGKILLed leaves it running. Its `claude` process carries `--name '{repo}
+  / {slug} / finisher'` (`'{repo} / {name} / single / finisher'` for a single run), so `ps -ax -o
+  pid,command | grep '/ finisher'` finds it for a `kill`.
+- **A single run's finisher has no coordinator agent to fall back on**, and none is started after a
+  fallback: the run waits for the person's hand merge, or red.
 - **A go question asked in the same pass as its `ready`**, just before it, still counts: statuses and
   the conversation are drained together.
