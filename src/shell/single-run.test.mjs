@@ -40,6 +40,8 @@ import {
   rootOf,
   runSingle,
   singleChecks,
+  singleEndAlerts,
+  singleEndSeen,
   singleNotifyViews,
   singleRunState,
 } from './single-run.mjs';
@@ -1515,4 +1517,200 @@ console.log('runSingle returned', process.exitCode);
   git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
   assert.equal(await exited, 0, out);
   assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+});
+
+// ---- The end sequence's phone alerts (single-finisher T06, DESIGN §2.12). publish and clear are fakes. ----
+
+const endState = (over = {}, end = {}) => {
+  const st = initialSingleState({ id: ID, base: 'main', baseSha: 'abc', commands: { setup: [], test: ['true'] } });
+  return { ...st, name: 'fix-typo', step: 'wait', ...over, end: { ...st.end, seq: 1, ...end } };
+};
+
+test('singleNotifyViews: a sync helper asking is `{name} · resolve` / `· fix`; the finisher by its phase', () => {
+  const stopped = { state: 'idle', background: [], pending: [] };
+  for (const [helper, phase] of [['resolve', 'resolving'], ['fix', 'fixing']]) {
+    const state = endState({ step: 'sync' }, { phase });
+    const sess = { id: `${helper}-1`, step: helper, n: 1, logPath: null, cwd: '/w', live: true, activity: stopped };
+    const rs = singleRunState(state, { sessions: [sess] });
+    assert.deepEqual(rs.helper, { id: helper, asking: 'question', worker: { id: `${helper}-1`, live: true, logPath: null, cwd: '/w' } });
+    assert.deepEqual(singleNotifyViews(rs, [{ id: sess.id, activity: stopped, lastText: 'Which side wins?', url: null }], { id: ID }), [
+      { id: `${helper}-1`, waiting: 'question', title: `fix-typo · ${helper}`, message: 'asks: Which side wins?', remote: 'wanted', url: null },
+    ]);
+    // Working, or its report accepted and waiting on pir's tests: nothing is the person's.
+    const busy = singleRunState(state, { sessions: [{ ...sess, activity: { state: 'busy', background: [], pending: [] } }] });
+    assert.deepEqual(singleNotifyViews(busy, [{ id: sess.id, activity: busy.activity }], { id: ID }), []);
+    const accepted = singleRunState({ ...state, accepted: { kind: 'resolved', name: 'fix-typo', head: 'h' } }, { sessions: [sess] });
+    assert.deepEqual(singleNotifyViews(accepted, [{ id: sess.id, activity: stopped }], { id: ID }), []);
+  }
+  assert.equal(singleRunState(endState({ step: 'sync' }, { phase: 'testing' }), {}).helper, null);
+
+  const view = (phase, extra = {}) => ({ id: 'fin-1', state: phase, phase, goGiven: false, summary: 'All clean.', steps: ['git merge pir/fix-typo', './install.sh'], rulesSource: 'project', asking: false, ...extra });
+  const finViews = (v, fs = { id: 'fin-1', pending: [], url: 'https://claude.ai/code/f' }) => singleNotifyViews(singleRunState(endState(), { finisher: v }), [fs], { id: ID });
+  const [ready] = finViews(view('awaiting-go'));
+  assert.deepEqual([ready.id, ready.waiting, ready.key, ready.title, ready.url], ['finisher', 'awaiting-go', 'awaiting-go', 'fix-typo · ready for your go', 'https://claude.ai/code/f']);
+  assert.match(ready.message, /^2 steps from project rules: git merge pir\/fix-typo/);
+  const [stuck] = finViews(view('stuck', { summary: 'The install failed.' }));
+  assert.deepEqual([stuck.title, stuck.message], ['fix-typo · finisher stuck', 'The install failed.']);
+  const [asking] = finViews(view('finishing'), { id: 'fin-1', pending: [{ kind: 'permission', requestId: 'r', toolName: 'Bash', input: { command: 'rm -rf dist/' } }] });
+  assert.deepEqual([asking.title, asking.waiting], ['fix-typo · finisher', 'permission']);
+  assert.deepEqual(finViews(view('preparing')), []);
+  assert.deepEqual(finViews(view('done')), []);
+  assert.deepEqual(finViews(view('preparing', { state: 'given-up' })), []);
+});
+
+test('singleEndAlerts: hold once per reason, red once per sequence, fallback failed or gave up, finished; nothing on merged or closed', () => {
+  const titles = (r) => r.alerts.map((a) => `${a.kind} ${a.alert.title}: ${a.alert.message}`);
+  // A held sync: one alert, none for the same reason again, a new one for a new reason, and again once cleared.
+  const held = (reason, text) => endState({ step: 'sync' }, { phase: 'prepare', hold: { reason, text, since: 0, nextTry: 1 } });
+  let r = singleEndAlerts(held('fetch-failed', "can't reach origin, retrying"), {});
+  assert.deepEqual(titles(r), ["hold fix-typo · waiting: can't reach origin, retrying"]);
+  r = singleEndAlerts(held('fetch-failed', "can't reach origin, retrying"), r.sent);
+  assert.deepEqual(r.alerts, []);
+  r = singleEndAlerts(held('diverged', 'your main and origin/main have split apart'), r.sent);
+  assert.deepEqual(titles(r), ['hold fix-typo · waiting: your main and origin/main have split apart']);
+  r = singleEndAlerts(endState({ step: 'sync' }, { phase: 'merge' }), r.sent);
+  assert.deepEqual([r.alerts, r.sent.holdReason], [[], null]);
+  r = singleEndAlerts(held('diverged', 'split'), r.sent);
+  assert.equal(r.alerts.length, 1, 'a later hold alerts again');
+
+  // Red: once per sync sequence, worded by endAlert; a clash left unresolved outranks the test reason.
+  const red = (seq, end = {}) => endState({}, { seq, tests: 'red', testsReason: { reason: 'test `npm test` exited 1', logPath: '/l' }, ...end });
+  r = singleEndAlerts(red(2), {});
+  assert.deepEqual(titles(r), ['end fix-typo · not ready: Tests red on pir/fix-typo: test `npm test` exited 1']);
+  assert.deepEqual(singleEndAlerts(red(2), r.sent).alerts, []);
+  assert.deepEqual(titles(singleEndAlerts(red(3), r.sent)), ['end fix-typo · not ready: Tests red on pir/fix-typo: test `npm test` exited 1']);
+  assert.deepEqual(titles(singleEndAlerts(red(2, { sync: { state: 'unresolved', files: ['a'] } }), {})), ['end fix-typo · not ready: Merge with main unresolved on pir/fix-typo']);
+  assert.deepEqual(singleEndAlerts(endState({ step: 'sync' }, { phase: 'testing', tests: 'red' }), {}).alerts, [], 'red mid-sequence, before the fix, is not a settle');
+
+  // The finisher taking over sends no `ready to merge`; one that never started does, one that gave up its own.
+  assert.deepEqual(singleEndAlerts(endState({}, { tests: 'green', finisher: 'on' }), {}).alerts, []);
+  r = singleEndAlerts(endState({}, { tests: 'green', finisher: 'fallback', fallback: 'failed' }), {});
+  assert.deepEqual(titles(r), ['end fix-typo · ready to merge: git switch main && git merge pir/fix-typo']);
+  assert.deepEqual(singleEndAlerts(endState({}, { tests: 'green', finisher: 'fallback', fallback: 'failed' }), r.sent).alerts, []);
+  assert.deepEqual(titles(singleEndAlerts(endState({ base: 'dev' }, { tests: 'green', finisher: 'fallback', fallback: 'gave-up' }), {})), [
+    'finisher fix-typo · finisher gave up: Merge by hand: git switch dev && git merge pir/fix-typo',
+  ]);
+  // Red under the finisher: the red alert alone.
+  assert.deepEqual(titles(singleEndAlerts(red(2, { finisher: 'fallback', fallback: 'red' }), {})), ['end fix-typo · not ready: Tests red on pir/fix-typo: test `npm test` exited 1']);
+
+  // The ends: the finisher's `finished` once, with its summary; nothing for merged, closed or dropped.
+  r = singleEndAlerts(endState({ outcome: 'finished' }, { finisher: 'on' }), {}, { summary: 'Merged and installed.' });
+  assert.deepEqual(titles(r), ['finisher fix-typo · finished: Merged and installed.']);
+  assert.deepEqual(singleEndAlerts(endState({ outcome: 'finished' }), r.sent).alerts, []);
+  for (const outcome of ['merged', 'closed', 'dropped']) {
+    assert.deepEqual(singleEndAlerts(endState({ outcome }, { tests: 'red', finisher: 'fallback', fallback: 'failed' }), {}).alerts, [], outcome);
+  }
+
+  // A resumed program treats a red wait or a fallback it finds as already alerted; a hold comes again.
+  assert.deepEqual(singleEndAlerts(red(2), singleEndSeen(red(2))).alerts, []);
+  const fb = endState({}, { tests: 'green', finisher: 'fallback', fallback: 'failed' });
+  assert.deepEqual(singleEndAlerts(fb, singleEndSeen(fb)).alerts, []);
+  assert.equal(singleEndAlerts(held('diverged', 'split'), singleEndSeen(held('diverged', 'split'))).alerts.length, 1);
+});
+
+const sentTitles = (ntfy) => ntfy.pubs.map((p) => p.title);
+
+test('alerts end: the finisher asks for the go → `ready for your go`; after the Go the ready alert clears and `finished` follows', async (t) => {
+  const name = 'go-alerts';
+  const s = setup(t, (x) => basic(x, name));
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps, handMerge: false });
+  t.after(() => run.stop.abort());
+  const ask = await goAsked(s, name, run);
+  await waitFor(() => ntfy.pubs.length === 1, `the ready alert\n${run.lines.join('\n')}`);
+  const ready = ntfy.pubs[0];
+  assert.equal(ready.title, `${name} · ready for your go`);
+  assert.match(ready.message, /^2 steps from /);
+  assert.ok(run.lines.some((l) => l.startsWith(`notify send finisher ${ready.seq} ok`)), run.lines.join('\n'));
+  sayGo(s, name, ask);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'finished');
+  assert.deepEqual(sentTitles(ntfy), [`${name} · ready for your go`, `${name} · finished`]);
+  assert.ok(ntfy.clears.some((c) => c.seq === ready.seq), 'the ready alert is cleared');
+  assert.ok(!sentTitles(ntfy).some((x) => x.endsWith('ready to merge')));
+  // Its note sits in the finisher's own conversation.
+  assert.ok(convLog(controlAfter(s, name), 'finisher').some((e) => e.dir === 'note' && e.kind === 'notified'));
+});
+
+test('alerts end: a resolve helper asking sends one `{name} · resolve` alert, cleared when the person answers', async (t) => {
+  const name = 'helper-asks';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_RESOLVE_MATCH, script: [...opening(), ...say('Which side of change.txt should win?'), ...singleResolveScript({ name })] }]));
+  commitOnMain(s, 'change.txt', 'main side\n');
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps });
+  t.after(() => run.stop.abort());
+  await waitFor(() => ntfy.pubs.length >= 1, `the helper's alert\n${run.lines.join('\n')}`);
+  assert.deepEqual([ntfy.pubs[0].title, ntfy.pubs[0].message], [`${name} · resolve`, 'asks: Which side of change.txt should win?']);
+  const helperId = stateIn(controlAfter(s, name)).sessions.resolve[0];
+  assert.deepEqual(dropPersonInput(controlAfter(s, name), { to: helperId, kind: 'message', text: 'Keep both.' }, { coordinatorAlive: true }), { ok: true });
+  await waitFor(() => ntfy.clears.some((c) => c.seq === ntfy.pubs[0].seq), 'the clear');
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+  assert.equal(sentTitles(ntfy).filter((x) => x === `${name} · resolve`).length, 1);
+});
+
+test('alerts end: red after the fix → one `not ready`; a finisher that fails to start → `ready to merge`; nothing without notify.json', async (t) => {
+  const name = 'red-alert';
+  const s = setup(t, (x) => basic(x, name, [{ match: SINGLE_FIX_MATCH, script: singleFixScript({ name, fix: 'echo y >> other.txt' }) }]), {
+    commands: { setup: [], test: ['test ! -f broken'] },
+  });
+  commitOnMain(s, 'broken', 'x\n');
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  const run = start(s, { env, deps: ntfy.deps, handMerge: false });
+  t.after(() => run.stop.abort());
+  await waitFor(() => ntfy.pubs.length === 1, `the red alert\n${run.lines.join('\n')}`);
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.deepEqual(ntfy.pubs.map((p) => [p.title, p.message]), [[`${name} · not ready`, `Tests red on pir/${name}: test \`test ! -f broken\` exited 1`]]);
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await run.done, 0, run.lines.join('\n'));
+  assert.equal(ntfy.pubs.length, 1, 'nothing on merged');
+
+  const f = setup(t, (x) => basic(x, 'no-fin'));
+  const fenv = { PIR_HOME: f.home };
+  writeNotifyConfig(NTFY, fenv);
+  const fn = fakeNtfy();
+  const fr = start(f, { env: fenv, deps: { ...fn.deps, startFinisher: () => { throw new Error('boom'); } } });
+  assert.equal(await fr.done, 0, fr.lines.join('\n'));
+  assert.deepEqual(fn.pubs.map((p) => [p.title, p.message]), [['no-fin · ready to merge', 'git switch main && git merge pir/no-fin']]);
+
+  const q0 = setup(t, (x) => basic(x, 'quiet-end'));
+  const qn = fakeNtfy();
+  const qr = start(q0, { deps: { ...qn.deps, startFinisher: () => { throw new Error('boom'); } } });
+  assert.equal(await qr.done, 0, qr.lines.join('\n'));
+  assert.deepEqual([qn.pubs, qn.clears], [[], []]);
+  assert.ok(!qr.lines.some((l) => l.startsWith('notify ')));
+});
+
+test('alerts end: a held sync sends one `{name} · waiting` with the reason, however often it retries', async (t) => {
+  const name = 'held';
+  const s = setup(t, (x) => basic(x, name));
+  const env = { PIR_HOME: s.home };
+  writeNotifyConfig(NTFY, env);
+  const ntfy = fakeNtfy();
+  let skew = 0;
+  let tries = 0;
+  const prepareBase = () => {
+    tries += 1;
+    return { ok: false, reason: 'fetch-failed', remote: 'origin' };
+  };
+  const run = start(s, { env, deps: { ...ntfy.deps, prepareBase, now: () => Date.now() + skew } });
+  t.after(() => run.stop.abort());
+  await waitFor(() => ntfy.pubs.length === 1, `the hold alert\n${run.lines.join('\n')}`);
+  assert.deepEqual([ntfy.pubs[0].title, ntfy.pubs[0].message], [`${name} · waiting`, "can't reach origin, retrying"]);
+  // Past the retry interval the base is tried again, held for the same reason: no second alert.
+  const before = tries;
+  skew = 61_000;
+  await waitFor(() => tries > before, 'a retry');
+  skew = 122_000;
+  await waitFor(() => tries > before + 1, 'a second retry');
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(ntfy.pubs.length, 1);
+  run.stop.abort();
+  assert.equal(await run.done, 0);
 });
