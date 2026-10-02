@@ -172,7 +172,9 @@ test('single: the builder at work — build active with its clock, review waits 
   assert.deepEqual(d.header, { name: '"Fix the typo in the REA…"', state: 'building', branch: 'pir/single-ab12' });
   assert.deepEqual(r.build, { id: 'build', role: 'builder', kind: 'active', text: 'building', clock: 60_000 });
   assert.deepEqual(r.review, { id: 'review', role: 'reviewer', kind: 'pending', text: 'waits on build', clock: null });
-  assert.deepEqual(r.merge, { id: 'merge', role: '—', kind: 'pending', text: 'waits on review', clock: null });
+  assert.deepEqual(r.sync, { id: 'sync', role: '—', kind: 'pending', text: 'waits on review', clock: null });
+  assert.deepEqual(r.merge, { id: 'merge', role: '—', kind: 'pending', text: 'waits on sync', clock: null });
+  assert.deepEqual(d.rows.map((x) => x.id), ['build', 'review', 'sync', 'merge']);
   assert.equal(d.footer, null);
 });
 
@@ -203,7 +205,7 @@ test('single: a red round — the step back at work reads tests red · round n, 
   assert.deepEqual(byId(r).build, { id: 'build', role: 'builder', kind: 'done', text: 'built', clock: 30_000 }, 'a done step shows how long it took, not its red rounds');
   assert.deepEqual(byId(r).review, { id: 'review', role: 'reviewer', kind: 'active', text: 'tests red · round 1', clock: 10_000 });
   assert.deepEqual(r.header, { name: 'fix-typo', state: 'reviewing', branch: 'pir/fix-typo' });
-  assert.equal(byId(r).merge.text, 'waits on review');
+  assert.equal(byId(r).merge.text, 'waits on sync');
 });
 
 test('single: a step asking — amber row, clock stopped at stoppedAt, the footer names the step, the header keeps the step', () => {
@@ -229,6 +231,7 @@ test('single: ready — both steps done with their times, the merge row is the h
   assert.deepEqual(d.header, { name: 'fix-typo', state: 'ready to merge', branch: 'pir/fix-typo' });
   assert.deepEqual(r.build, { id: 'build', role: 'builder', kind: 'done', text: 'built', clock: 30_000 });
   assert.deepEqual(r.review, { id: 'review', role: 'reviewer', kind: 'done', text: 'reviewed', clock: 12_000 });
+  assert.deepEqual(r.sync, { id: 'sync', role: '—', kind: 'pending', text: 'not started', clock: null }, 'a legacy run never synced');
   assert.deepEqual(r.merge, { id: 'merge', role: '—', kind: 'asking', text: HANDOFF, clock: null });
   assert.deepEqual(d.footer, { kind: 'ready', line: HANDOFF });
   // The base is the run's own, from the snapshot, else the record.
@@ -280,5 +283,73 @@ test('single: stopped or crashed (stale) — the live-looking step names how the
   // Finished with no snapshot to say how: stale, and nothing to merge is claimed.
   const bare = buildSingleDisplay(null, { now: NOW, record: S_UNNAMED, state: 'finished' });
   assert.deepEqual(bare.footer, { kind: 'stale', state: 'finished' });
-  assert.equal(byId(bare).merge.text, 'waits on review');
+  assert.equal(byId(bare).merge.text, 'waits on sync');
+});
+
+// ---- The end sequence's rows (single-finisher T07, DESIGN §2.11). ----
+
+const endState = (over = {}, end = {}) => ({ ...NAMED_STATE, step: 'sync', ...over, end: { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'a', commands: { setup: [], test: [] } }).end, ...end } });
+const finView = (state, extra = {}) => ({ id: 'fin-sess', logPath: '/c/conversations/finisher-1.ndjson', state, phase: state, goGiven: false, summary: null, steps: [], rulesSource: 'engine', asking: false, ...extra });
+const doneSessions = [sSess('build', 'exited', false), sSess('review', 'exited', false)];
+
+test('single sync row: each phase in the steps view, amber when held, the helper role while one works, stale once the program is gone (T07)', () => {
+  const show = (state, sessions = doneSessions, extra = {}, cls = 'running') => buildSingleDisplay(srs(state, sessions, extra), { now: NOW, record: S_NAMED, state: cls });
+  let d = show(endState({}, { phase: 'merge' }));
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: '—', kind: 'active', text: 'bringing in main', clock: null });
+  assert.equal(d.header.state, 'syncing');
+  assert.deepEqual(byId(d).build.kind, 'done');
+  d = show(endState({}, { phase: 'prepare', hold: { reason: 'fetch-failed', text: "can't reach origin, retrying", since: 1, nextTry: 2 } }));
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: '—', kind: 'held', text: "can't reach origin · retrying", clock: null });
+  d = show(endState({ live: true }, { phase: 'resolving' }), [...doneSessions, sSess('resolve', 'busy')], { since: { resolve: 90_000 } });
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: 'resolve', kind: 'active', text: 'resolving a clash', clock: 10_000 });
+  d = show(endState({ live: true }, { phase: 'fixing' }), [...doneSessions, sSess('fix', 'questions')], { since: { fix: 80_000 }, stoppedAt: { fix: 90_000 } });
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: 'fix', kind: 'asking', text: 'asking you · a question', clock: 10_000 });
+  assert.deepEqual(d.footer, { kind: 'asking', step: 'sync' });
+  assert.equal(d.header.state, 'syncing');
+  d = show(endState({ running: 'tests' }, { phase: 'testing' }), doneSessions, { running: { kind: 'tests', since: 97_000 } });
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: '—', kind: 'active', text: 'testing…', clock: 3_000 });
+  d = show(endState({ step: 'wait' }, { tests: 'green', sync: { state: 'merged' }, finisher: 'on' }), doneSessions, { finisher: finView('awaiting-go') });
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: '—', kind: 'done', text: 'main brought in · tests green', clock: null });
+  d = show(endState({ step: 'wait' }, { tests: 'red', sync: { state: 'merged' }, finisher: 'fallback', fallback: 'red' }));
+  assert.deepEqual(byId(d).sync, { id: 'sync', role: '—', kind: 'failed', text: 'not ready · tests red', clock: null });
+  assert.deepEqual([byId(d).merge.kind, byId(d).merge.text], ['failed', 'not ready · tests red']);
+  assert.deepEqual([d.header.state, d.footer], ['not ready', null], 'no merge line anywhere');
+  for (const cls of ['stopped', 'crashed']) {
+    d = show(endState({}, { phase: 'merge' }), doneSessions, {}, cls);
+    assert.deepEqual([byId(d).sync.kind, byId(d).sync.text, byId(d).sync.clock], ['failed', cls, null]);
+  }
+});
+
+test('single merge row: the finisher in the build row\'s words and colours, the fallback hand-off, and how a finished run reads (T07)', () => {
+  const wait = (end = {}, over = {}) => endState({ step: 'wait', ...over }, { tests: 'green', sync: { state: 'up-to-date' }, finisher: 'on', ...end });
+  const show = (state, finisher = null, cls = 'running', merged = false) => buildSingleDisplay(srs(state, doneSessions, { finisher }), { now: NOW, record: S_NAMED, state: cls, merged });
+  const kinds = { preparing: 'active', 'awaiting-go': 'asking', finishing: 'active', stuck: 'asking', done: 'done', restarting: 'pending', 'given-up': 'pending' };
+  for (const [phase, kind] of Object.entries(kinds)) {
+    const d = show(wait(), finView(phase));
+    assert.equal(byId(d).merge.kind, kind, phase);
+    assert.match(byId(d).merge.text, /^◆ finisher {2}/);
+    assert.equal(d.footer, null, `${phase}: the merge row is not a step asking`);
+  }
+  let d = show(wait(), finView('awaiting-go'));
+  assert.deepEqual(byId(d).merge, { id: 'merge', role: '—', kind: 'asking', text: '◆ finisher  waiting for your go', clock: null });
+  assert.deepEqual([byId(d).sync.text, d.header.state], ['up to date · tests green', 'ready for your go']);
+  assert.equal(show(wait(), finView('stuck')).header.state, 'asking you');
+  assert.equal(show(wait(), finView('finishing')).header.state, 'finishing');
+  assert.equal(byId(show(wait(), finView('preparing', { asking: true }))).merge.kind, 'asking');
+  // The fallback wait: the hand-off line on the row, and the footer repeats it for a narrow frame.
+  d = show(wait({ finisher: 'fallback', fallback: 'failed' }));
+  assert.deepEqual(byId(d).merge, { id: 'merge', role: '—', kind: 'asking', text: HANDOFF, clock: null });
+  assert.deepEqual([d.header.state, d.footer], ['ready to merge', { kind: 'ready', line: HANDOFF }]);
+  // Finished: by the finisher or the person's merge, merged; closed, the merge line still shown.
+  for (const outcome of ['finished', 'merged']) {
+    d = show(wait({}, { outcome }), null, 'finished');
+    assert.deepEqual([d.header.state, byId(d).merge.kind, byId(d).merge.text, d.footer], [outcome, 'done', 'merged', null], outcome);
+    assert.equal(byId(d).sync.text, 'up to date · tests green');
+  }
+  d = show(wait({}, { outcome: 'closed' }), null, 'finished');
+  assert.deepEqual([d.header.state, byId(d).merge.kind, byId(d).merge.text, d.footer], ['closed', 'asking', HANDOFF, { kind: 'ready', line: HANDOFF }]);
+  d = show(wait({}, { outcome: 'closed' }), null, 'finished', true);
+  assert.deepEqual([d.header.state, byId(d).merge.text, d.footer], ['closed', 'merged', null], 'a closed run the person then merged');
+  // A program gone while the finisher was on: the row is stale, as any live-looking step.
+  assert.deepEqual([byId(show(wait(), finView('awaiting-go'), 'crashed')).merge.kind, byId(show(wait(), finView('awaiting-go'), 'crashed')).merge.text], ['failed', 'crashed']);
 });

@@ -861,11 +861,14 @@ function endStep(s, facts, actions, baseFinish) {
 }
 
 // singleProgress(runState) → the dashboard's PROGRESS cell (§2.8, single-finisher §2.11). `runState` is
-// the snapshot's { step, phase: 'working'|'testing', outcome, rounds, tests }; `tests` ('green'|'red') is
-// the settled result a `wait` reads. A red round shows after the step's `tests`. A legacy `ready` (a run
-// finished by an older pir) reads as it always did.
+// the snapshot's { step, phase: 'working'|'testing', outcome, rounds, end: { tests } }; `tests`
+// ('green'|'red', on `end` or, as T03 wrote it, at the top) is the settled result a `wait` reads. A red
+// round shows after the step's `tests`. A legacy `ready` (a run finished by an older pir) reads as it
+// always did.
 export function singleProgress(runState) {
-  const { step, phase, outcome, rounds, tests } = runState ?? {};
+  const { step, phase, outcome, rounds } = runState ?? {};
+  // The snapshot carries the settled result on `end` (single-run.mjs singleRunState).
+  const tests = runState?.tests ?? runState?.end?.tests ?? null;
   const inReview = step === 'review' || step === 'rename';
   if (outcome === 'ready') return 'build ✓ review ✓';
   if (outcome === 'finished' || outcome === 'merged') return 'build ✓ review ✓ sync ✓ merge ✓';

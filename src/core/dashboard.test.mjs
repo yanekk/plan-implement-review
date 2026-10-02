@@ -885,7 +885,7 @@ test('dashboardReducer: `c` and → on the finisher row open the finisher; with 
 
 // ---- Single runs beside plans and builds (single-runs T10, DESIGN §2.8, §2.9, §2.11). ----
 
-import { isSingle, noCoordinatorNote, singleNoSessionNote, singleStepState } from './dashboard.mjs';
+import { isSingle, noCoordinatorNote, openAgent, openCoordinator, singleNoSessionNote, singleStepState } from './dashboard.mjs';
 import { initialSingleState, singleProgress } from './singleflow.mjs';
 import { singleRunState } from '../shell/single-run.mjs';
 
@@ -1036,31 +1036,34 @@ test('the chords on a single row: stop while running, resume and remove once sto
   }
 });
 
-test('a single run opens on its steps: build, review, merge; → opens a step\'s session, and a step without one says why', () => {
+test('a single run opens on its steps: build, review, sync, merge; → opens a step\'s session, and a step without one says why', () => {
   const views = [singleView({ over: NAMED, sessions: [sSession('build', 'exited', false), sSession('review', 'busy')] })];
   let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
   assert.deepEqual([ui.view, ui.taskSel, ui.openKey], ['watch', 0, 'blog__fix-typo']);
-  assert.deepEqual(openTasks(views, ui).map((s) => s.id), ['build', 'review', 'merge']);
+  assert.deepEqual(openTasks(views, ui).map((s) => s.id), ['build', 'review', 'sync', 'merge']);
   assert.equal(goOpen(views, ui), false);
   // The builder's finished session opens read-only (live false), the reviewer's live.
   const built = dashboardReducer(ui, { type: 'open' }, views).ui;
   assert.deepEqual([built.view, built.openWorker], ['worker', { taskId: 'build', workerId: 'build-sess', logPath: '/c/conversations/build-1.ndjson', live: false }]);
   ui = dashboardReducer(ui, { type: 'down' }, views).ui;
   assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.openWorker.live, true);
-  // The merge row is the person's own step: no conversation, a note.
+  // The sync row has no helper session yet; the merge row, with no finisher on, has none either.
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  const sync = dashboardReducer(ui, { type: 'open' }, views).ui;
+  assert.deepEqual([sync.view, sync.note], ['watch', 'sync has no session — pir brought main in itself.']);
   ui = dashboardReducer(ui, { type: 'down' }, views).ui;
   const merge = dashboardReducer(ui, { type: 'open' }, views).ui;
   assert.deepEqual([merge.view, merge.note], ['watch', singleNoSessionNote({ id: 'merge' })]);
-  assert.equal(dashboardReducer(ui, { type: 'down' }, views).ui.taskSel, 2, 'clamped at the last step');
+  assert.equal(dashboardReducer(ui, { type: 'down' }, views).ui.taskSel, 3, 'clamped at the last step');
   // `c` has nothing to open on a single run.
   const c = dashboardReducer(ui, { type: 'key', key: 'c' }, views).ui;
   assert.deepEqual([c.view, c.note], ['watch', 'a single run has no coordinator agent.']);
   assert.equal(noCoordinatorNote(views, ui), 'a single run has no coordinator agent.');
 
-  // No snapshot yet: the three steps are there, and none opens.
+  // No snapshot yet: the four steps are there, and none opens.
   const fresh = [singleView({ snap: false })];
   const f = dashboardReducer(initialUi(), { type: 'open' }, fresh).ui;
-  assert.deepEqual(openTasks(fresh, f).map((s) => [s.id, s.phase]), [['build', 'pending'], ['review', 'pending'], ['merge', 'pending']]);
+  assert.deepEqual(openTasks(fresh, f).map((s) => [s.id, s.phase]), [['build', 'pending'], ['review', 'pending'], ['sync', 'pending'], ['merge', 'pending']]);
   assert.equal(dashboardReducer(f, { type: 'open' }, fresh).ui.note, 'build has no session yet — the builder is starting.');
   assert.match(singleNoSessionNote({ id: 'review' }), /^review has no session yet — the reviewer starts when/);
 });
@@ -1071,6 +1074,7 @@ test('a dropped single run: → on the review step it never reached says the run
   ui = dashboardReducer(ui, { type: 'down' }, views).ui;
   const review = dashboardReducer(ui, { type: 'open' }, views).ui;
   assert.deepEqual([review.view, review.note], ['watch', 'review has no session — the run was dropped before the reviewer started.']);
+  ui = dashboardReducer(ui, { type: 'down' }, views).ui;
   ui = dashboardReducer(ui, { type: 'down' }, views).ui;
   assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.note, 'merge has no conversation — the run was dropped, so there is nothing to merge.');
   // A stopped run is resumable: its reviewer may still start, and its merge is still to come.
@@ -1085,8 +1089,7 @@ test('a single run\'s merge row: → says the merge is yours while it is ready, 
   const done = { ...NAMED, outcome: 'ready' };
   const noteOn = (views) => {
     let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
-    ui = dashboardReducer(ui, { type: 'down' }, views).ui;
-    ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+    for (let i = 0; i < 3; i += 1) ui = dashboardReducer(ui, { type: 'down' }, views).ui;
     return dashboardReducer(ui, { type: 'open' }, views).ui.note;
   };
   assert.equal(noteOn([singleView({ state: 'finished', over: done, merged: false })]), 'merge has no conversation — the merge is yours to run by hand.');
@@ -1101,4 +1104,102 @@ test('an open single run is followed through its rename by the program behind it
   const after = [singleView({ over: NAMED, sessions: [sSession('review', 'busy')] })];
   assert.equal(findOpen(after, ui).slug, 'fix-typo');
   assert.deepEqual([repinOpen(ui, after).openKey, repinOpen(ui, after).openSlug], ['blog__fix-typo', 'fix-typo']);
+});
+
+// ---- A single run's end on the list and in the steps view (single-finisher T07, DESIGN §2.11). ----
+
+const singleEnd = (over = {}, end = {}) => ({ ...NAMED, step: 'wait', ...over, end: { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'a', commands: { setup: [], test: [] } }).end, tests: 'green', sync: { state: 'up-to-date' }, finisher: 'on', ...end } });
+const finV = (state, extra = {}) => ({ id: 'fin-sess', logPath: '/c/conversations/finisher-1.ndjson', state, phase: state, goGiven: false, summary: null, steps: [], rulesSource: 'engine', asking: false, ...extra });
+// singleView with the finisher's view() handed to singleRunState as the program hands it.
+function endView({ state = 'running', over = {}, end = {}, sessions = [], finisher = null, merged } = {}) {
+  const v = singleView({ state, over: singleEnd(over, end), sessions, merged });
+  const st = { ...initialSingleState({ id: 'single-ab12', base: 'main', baseSha: 'abc1234def', commands: { setup: [], test: ['npm test'] } }), ...singleEnd(over, end) };
+  return { ...v, snap: { runState: singleRunState(st, { sessions, finisher }) } };
+}
+
+test('runDisplayState: a single run\'s end — syncing, ready for your go, asking you, finishing, ready to merge, not ready, merged, finished, closed (T07)', () => {
+  const d = (o) => runDisplayState(endView(o));
+  assert.equal(d({ over: { step: 'sync' }, end: { phase: 'merge', finisher: null, tests: null } }), 'syncing');
+  assert.equal(d({ over: { step: 'sync', running: 'tests' }, end: { phase: 'testing', finisher: null } }), 'syncing', 'the sync\'s tests read syncing');
+  assert.equal(d({ over: { step: 'sync', live: true }, end: { phase: 'resolving', finisher: null }, sessions: [sSession('resolve', 'questions')] }), 'asking-you', 'a helper asking');
+  assert.equal(d({ over: { step: 'sync' }, end: { phase: 'prepare' }, finisher: finV('preparing') }), 'syncing', 'a re-sync under the finisher');
+  assert.equal(d({ finisher: finV('awaiting-go') }), 'ready-for-your-go');
+  assert.equal(d({ finisher: finV('stuck') }), 'asking-you');
+  assert.equal(d({ finisher: finV('finishing', { asking: true }) }), 'asking-you', 'a parked request');
+  for (const phase of ['preparing', 'finishing', 'done', 'restarting']) assert.equal(d({ finisher: finV(phase) }), 'finishing', phase);
+  assert.equal(d({ end: { finisher: 'fallback', fallback: 'failed' } }), 'ready-to-merge');
+  assert.equal(d({ end: { finisher: 'fallback', fallback: 'red', tests: 'red' } }), 'not-ready');
+  assert.equal(d({ end: { finisher: null, tests: 'red', sync: { state: 'unresolved' } } }), 'not-ready');
+  assert.equal(d({ state: 'finished', over: { outcome: 'merged' } }), 'merged');
+  assert.equal(d({ state: 'finished', over: { outcome: 'finished' } }), 'finished');
+  assert.equal(d({ state: 'finished', over: { outcome: 'closed' } }), 'closed');
+  assert.equal(d({ state: 'finished', over: { outcome: 'closed' }, merged: true }), 'closed', 'closed stays closed');
+  assert.equal(d({ state: 'stopped', finisher: finV('awaiting-go') }), 'stopped');
+  // ready for your go only when nothing else asks: a step asking outranks it.
+  const v = endView({ finisher: finV('awaiting-go') });
+  v.snap.runState.steps[2] = { ...v.snap.runState.steps[2], phase: 'asking' };
+  assert.equal(runDisplayState(v), 'asking-you');
+  // A legacy run is read as it always was.
+  assert.equal(runDisplayState(singleView({ state: 'finished', over: { ...NAMED, outcome: 'ready' } })), 'ready-to-merge');
+});
+
+test('buildDashboard: syncing, finishing and not ready count as running; ready for your go and ready to merge wait; closed is finished (T07)', () => {
+  const { rows, counts } = buildDashboard([
+    endView({ over: { step: 'sync' }, end: { phase: 'merge', finisher: null } }),
+    endView({ finisher: finV('finishing') }),
+    endView({ end: { finisher: 'fallback', fallback: 'red', tests: 'red' } }),
+    endView({ finisher: finV('awaiting-go') }),
+    endView({ end: { finisher: 'fallback', fallback: 'failed' } }),
+    endView({ state: 'finished', over: { outcome: 'closed' } }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.display), ['syncing', 'finishing', 'not-ready', 'ready-for-your-go', 'ready-to-merge', 'closed']);
+  assert.deepEqual(counts, { running: 3, finished: 1, crashed: 0, stopped: 0, waiting: 2, total: 6 });
+});
+
+test('singleProgress: the end sequence\'s cells, read off the snapshot (T07)', () => {
+  const p = (o) => singleProgress(endView(o).snap.runState);
+  assert.equal(p({ over: { step: 'sync' }, end: { phase: 'merge', finisher: null } }), 'build ✓ review ✓ sync …');
+  assert.equal(p({ over: { step: 'sync', running: 'tests' }, end: { phase: 'testing', finisher: null } }), 'build ✓ review ✓ sync · tests …');
+  assert.equal(p({ finisher: finV('awaiting-go') }), 'build ✓ review ✓ sync ✓ merge …');
+  assert.equal(p({ end: { finisher: 'fallback', fallback: 'red', tests: 'red' } }), 'build ✓ review ✓ sync ✗');
+  for (const outcome of ['finished', 'merged']) assert.equal(p({ over: { outcome } }), 'build ✓ review ✓ sync ✓ merge ✓', outcome);
+  assert.equal(p({ over: { outcome: 'closed' } }), 'build ✓ review ✓ sync ✓ merge ✗');
+});
+
+test('`c` and → on a single run: the finisher while it is on, the sync\'s helper or its note, and the notes when neither has a session (T07)', () => {
+  const watch = (views, row) => {
+    let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+    for (let i = 0; i < row; i += 1) ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+    return ui;
+  };
+  const FIN = { taskId: 'finisher', stepId: 'merge', workerId: 'fin-sess', logPath: '/c/conversations/finisher-1.ndjson', live: true };
+  const on = [endView({ finisher: finV('awaiting-go') })];
+  // `c` from any row opens the finisher; → on merge opens it too, under the finisher's own id.
+  const c = dashboardReducer(watch(on, 0), { type: 'key', key: 'c' }, on).ui;
+  assert.deepEqual([c.view, c.openWorker], ['worker', FIN]);
+  assert.deepEqual(openAgent(on, watch(on, 0)), FIN);
+  const right = dashboardReducer(watch(on, 3), { type: 'open' }, on).ui;
+  assert.deepEqual([right.view, right.openWorker], ['worker', FIN]);
+  assert.equal(openCoordinator(on, watch(on, 0)), null, 'a single run has no coordinator agent');
+  // Without the finisher: `c` says so, → on merge gives the no-session note.
+  const fallback = [endView({ end: { finisher: 'fallback', fallback: 'failed' } })];
+  const none = dashboardReducer(watch(fallback, 0), { type: 'key', key: 'c' }, fallback).ui;
+  assert.deepEqual([none.view, none.note], ['watch', 'a single run has no coordinator agent.']);
+  assert.equal(dashboardReducer(watch(fallback, 3), { type: 'open' }, fallback).ui.note, 'merge has no conversation — the merge is yours to run by hand.');
+  // → on sync: the current helper's conversation, else the last one's, else the note naming the base.
+  const helping = [endView({ over: { step: 'sync', live: true }, end: { phase: 'resolving', finisher: null }, sessions: [sSession('resolve', 'busy')] })];
+  const helper = dashboardReducer(watch(helping, 2), { type: 'open' }, helping).ui;
+  assert.deepEqual([helper.view, helper.openWorker], ['worker', { taskId: 'sync', workerId: 'resolve-sess', logPath: '/c/conversations/resolve-1.ndjson', live: true }]);
+  const after = [endView({ finisher: finV('awaiting-go'), end: { sync: { state: 'resolved' } }, sessions: [sSession('resolve', 'exited', false)] })];
+  assert.equal(dashboardReducer(watch(after, 2), { type: 'open' }, after).ui.openWorker.live, false, 'the last helper, read only');
+  const bare = [endView({ finisher: finV('awaiting-go') })];
+  assert.equal(dashboardReducer(watch(bare, 2), { type: 'open' }, bare).ui.note, 'sync has no session — pir brought main in itself.');
+  assert.equal(singleNoSessionNote({ id: 'sync' }, { base: 'dev' }), 'sync has no session — pir brought dev in itself.');
+});
+
+test('→ on the merge row of a run the finisher finished says the branch is merged (T07)', () => {
+  const views = [endView({ state: 'finished', over: { outcome: 'finished' } })];
+  let ui = dashboardReducer(initialUi(), { type: 'open' }, views).ui;
+  for (let i = 0; i < 3; i += 1) ui = dashboardReducer(ui, { type: 'down' }, views).ui;
+  assert.equal(dashboardReducer(ui, { type: 'open' }, views).ui.note, 'merge has no conversation — the branch is already merged.');
 });

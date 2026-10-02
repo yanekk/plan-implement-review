@@ -13,7 +13,7 @@
 // irreversible in the moment — stop kills in-flight work, remove drops the record — so the guard is
 // deliberate, not friction.
 
-import { askingCount, rowEntries } from './display.mjs';
+import { FINISHER_ID, askingCount, finisherEntry, finisherRow, rowEntries } from './display.mjs';
 
 // A run can be stopped only while running, and removed only while NOT running (DESIGN §2.6, §2.7): a
 // running run must be stopped before its record can be cleared. These two predicates are the whole of
@@ -87,15 +87,37 @@ export function planStepState(rs) {
 // asking, never the stopped-session rule, so a step phase of `asking` is trusted as it comes. Finished
 // `ready` it reads `ready-to-merge` until `view.merged` (the shell's merged check) says the person's
 // merge landed, then `merged`; any other finished outcome (`dropped`) reads `finished`.
+// The end sequence (single-finisher DESIGN §2.11): the sync step reads `syncing`; the wait reads
+// `ready-for-your-go` while the finisher waits for the go and nothing else asks, `asking-you` while it is
+// stuck or holds a request, `finishing` in its other phases, `ready-to-merge` on the fallback wait and
+// `not-ready` on a red one. Finished, the outcome decides: `finished`, `merged` or `closed`.
 export function runDisplayState(view) {
   const state = view?.state;
   if (isSingle(view)) {
     const rs = singleState(view);
     if (state === 'running') {
       if ((rs?.steps ?? []).some((st) => st.phase === 'asking')) return 'asking-you';
+      // The end sequence (single-finisher DESIGN §2.11): a re-sync under the finisher reads syncing too.
+      if (rs?.step === 'sync') return 'syncing';
+      if (rs?.step === 'wait') {
+        const merge = (rs.steps ?? []).find((st) => st.id === 'merge');
+        if (merge?.phase === 'finisher') {
+          const t = finisherEntry(merge.finisher ?? rs.finisher ?? {});
+          if (t.state === 'awaiting-go') return 'ready-for-your-go';
+          return finisherRow(t).kind === 'finisher-asking' ? 'asking-you' : 'finishing';
+        }
+        if (merge?.phase === 'ready') return 'ready-to-merge';
+        if (rs.end?.tests === 'red') return 'not-ready';
+        return 'finishing';
+      }
       return rs?.phase === 'testing' ? 'testing' : singleStepState(rs);
     }
-    if (state === 'finished' && rs?.outcome === 'ready') return view.merged ? 'merged' : 'ready-to-merge';
+    if (state === 'finished') {
+      const outcome = rs?.outcome ?? null;
+      if (outcome === 'ready') return view.merged ? 'merged' : 'ready-to-merge';
+      if (outcome === 'merged') return 'merged';
+      if (outcome === 'closed') return 'closed';
+    }
     return state;
   }
   if (!isPlan(view)) {
@@ -191,6 +213,12 @@ const TALLY = {
   'asking-you': 'waiting',
   'ready-to-merge': 'waiting',
   'ready-for-your-go': 'waiting',
+  // A single run's end (single-finisher DESIGN §2.11): its program runs through the sync and the wait; a
+  // red wait is not counted as waiting, as the amber states are.
+  syncing: 'running',
+  finishing: 'running',
+  'not-ready': 'running',
+  closed: 'finished',
 };
 
 // runKey(view) → the identity of one run. A slug alone is not unique: the same plan slug can run in two
@@ -219,8 +247,9 @@ function planSteps(view) {
   return STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
 }
 
-// The steps a single run's view lists (single-runs DESIGN §2.8), in row order; `merge` never has a session.
-const SINGLE_STEP_IDS = ['build', 'review', 'merge'];
+// The steps a single run's view lists (single-runs DESIGN §2.8), in row order; `sync` carries its current or
+// last helper's session and `merge` the finisher's while it is on (single-finisher DESIGN §2.11).
+const SINGLE_STEP_IDS = ['build', 'review', 'sync', 'merge'];
 function singleSteps(view) {
   const steps = singleState(view)?.steps ?? [];
   return SINGLE_STEP_IDS.map((id) => steps.find((s) => s.id === id) ?? { id, phase: 'pending', worker: null });
@@ -255,7 +284,8 @@ export function noSessionNote(step) {
 // The same for a single run's step rows (single-runs DESIGN §2.8). A dropped run is final: its reviewer
 // will never start and nothing is handed over to merge, so neither row may promise what is not coming.
 // Once the person's merge has landed (`merged`, the shell's check) the merge row no longer asks for it.
-export function singleNoSessionNote(step, { dropped = false, merged = false } = {}) {
+export function singleNoSessionNote(step, { dropped = false, merged = false, base = null } = {}) {
+  if (step?.id === 'sync') return `sync has no session — pir brought ${base ?? 'the base'} in itself.`;
   if (step?.id === 'merge') {
     if (dropped) return 'merge has no conversation — the run was dropped, so there is nothing to merge.';
     if (merged) return 'merge has no conversation — the branch is already merged.';
@@ -277,9 +307,15 @@ export function openCoordinator(views, ui) {
 
 // openAgent(views, ui) → the session `c` opens (finisher DESIGN §2.11): the finisher's while it is the
 // run's, else the coordinator agent's, as { taskId, workerId, logPath, live } for openWorker; else null.
+// A single run's finisher also names `stepId: 'merge'`, the step row it is opened from and lands back on.
 export function openAgent(views, ui) {
   const open = findOpen(views, ui);
-  if (!open || isPlan(open) || isSingle(open)) return null;
+  if (!open || isPlan(open)) return null;
+  // A single run's finisher, while it is on (single-finisher DESIGN §2.11); a single run has no agent.
+  if (isSingle(open)) {
+    const w = finisherEntry(singleState(open)?.finisher ?? {}).worker;
+    return singleState(open)?.finisher && w?.id ? { taskId: FINISHER_ID, stepId: 'merge', workerId: w.id, logPath: w.logPath, live: w.live } : null;
+  }
   const pinned = rowEntries(open.snap?.runState).find((e) => e.finisher);
   if (pinned?.worker?.id) return { taskId: pinned.id, workerId: pinned.worker.id, logPath: pinned.worker.logPath, live: pinned.worker.live };
   const c = openCoordinator(views, ui);
@@ -409,10 +445,19 @@ export function dashboardReducer(ui, event, views = []) {
         const open = findOpen(views, ui);
         if ((task.agent || task.finisher) && !w?.id) return { ui: { ...ui, note: noCoordinatorNote(views, ui), armed: null }, intent: null };
         if (!w?.id) {
-          const note = isSingle(open) ? singleNoSessionNote(task, { dropped: singleState(open)?.outcome === 'dropped', merged: runDisplayState(open) === 'merged' }) : isPlan(open) ? noSessionNote(task) : noWorkerNote(task, tasks);
+          const note = isSingle(open)
+            ? singleNoSessionNote(task, { dropped: singleState(open)?.outcome === 'dropped', merged: runDisplayState(open) === 'merged' || singleState(open)?.outcome === 'finished', base: singleState(open)?.base ?? open.record?.baseBranch ?? null })
+            : isPlan(open)
+              ? noSessionNote(task)
+              : noWorkerNote(task, tasks);
           return { ui: { ...ui, note, armed: null }, intent: null };
         }
-        const openWorker = { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
+        // A single run's merge row opens the finisher: the conversation header reads `agent` only for the
+        // finisher's own id (single-finisher DESIGN §2.11), and `stepId` keeps the row it came from.
+        const finisherStep = isSingle(open) && task.id === 'merge';
+        const openWorker = finisherStep
+          ? { taskId: FINISHER_ID, stepId: 'merge', workerId: w.id, logPath: w.logPath ?? null, live: !!w.live }
+          : { taskId: task.id, workerId: w.id, logPath: w.logPath ?? null, live: !!w.live };
         return { ui: { ...ui, view: 'worker', openWorker, armed: null }, intent: null };
       }
       if (ui.view !== 'list') return { ui: { ...ui, armed: null }, intent: null };

@@ -33,10 +33,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { holdText } from '../core/basebranch.mjs';
+import { mergeLine } from '../core/coordinator-brief.mjs';
+import { finisherEntry, finisherRow } from '../core/display.mjs';
 import { baseWatchVerdict, watchDue } from '../core/basewatch.mjs';
 import { chooseRules } from '../core/finisher-policy.mjs';
 import { alertText, endAlert, finisherAlert, finisherNotifyView, newNotifyState, notifyExit, notifyStep, singleEndAlert } from '../core/notify.mjs';
 import { resumeInstruction } from '../core/planflow.mjs';
+import { askingText } from '../core/plandisplay.mjs';
 import { parseRecord } from '../core/runrecord.mjs';
 import {
   builderInstruction,
@@ -222,11 +225,11 @@ const askingState = (state, running) => ({ accepted: state.accepted ?? state.pen
 // included), 'testing' while pir's tests or the baseline run, 'asking' while its live session asks the
 // person, 'done', 'failed' for the step a `dropped` report ended, 'pending' before it starts. A pending
 // request reads asking even during a test run; only the stopped-session rule is switched off then (§2.9).
-// The `merge` row is 'ready' once a legacy run ended `ready`, else 'pending'; whether the person has
-// merged is the dashboard's to find out (§2.8). In `sync` and `wait` both work steps are done. The end
-// sequence's own rows are T07's: the snapshot carries `end` (state.end) and `finisher` (the finisher's
-// view(), or null) for them (single-finisher DESIGN §2.11). `helper` is the sync helper held now, with
-// whether it asks the person by the same rule as a step row, for the phone (§2.12); null outside one.
+// In `sync` and `wait` both work steps are done. The end sequence has two rows of its own (single-finisher
+// DESIGN §2.11), each with its `text` in the words of §2.11's table (syncRow, mergeRow below); the snapshot
+// also carries `end` (state.end) and `finisher` (the finisher's view() while it is on, else null).
+// `helper` is the sync helper held now, with whether it asks the person by the same rule as a step row,
+// for the phone (§2.12); null outside one.
 export function singleRunState(state, { label = null, sessions = [], since = {}, stoppedAt = {}, took = {}, running = null, finisher = null } = {}) {
   const runningKind = running?.kind ?? state.running ?? null;
   const testing = state.outcome == null && TESTING.has(runningKind);
@@ -274,7 +277,8 @@ export function singleRunState(state, { label = null, sessions = [], since = {},
     steps: [
       stepRow('build'),
       stepRow('review'),
-      { id: 'merge', phase: state.outcome === 'ready' ? 'ready' : 'pending', since: null, stoppedAt: null, tookMs: null, asking: null, worker: null, workers: [] },
+      syncRow(state, { sessions, since, stoppedAt, running, runningKind }),
+      mergeRow(state, finisher),
     ],
     end: state.end ?? null,
     finisher,
@@ -298,6 +302,84 @@ function helperEntry(state, sessions, runningKind) {
   };
 }
 
+// The sync row (single-finisher DESIGN §2.11): the end sequence's progress, its current or last helper
+// session (resolve or fix) for → to open, and the words of §2.11's table. Its phase is 'pending' before the
+// sync, 'working' (bringing the base in, a helper at work), 'testing', 'held' (the base could not be
+// prepared; amber), 'asking' (a live helper asks the person), 'done' (settled green) or 'failed' (settled
+// red: not ready). A run that ended in the sync step, before it settled, never finished one: `not started`.
+function syncRow(state, { sessions, since, stoppedAt, running, runningKind }) {
+  const e = state.end ?? {};
+  const base = state.base ?? 'the base';
+  const mine = sessions.filter((s) => s.step === 'resolve' || s.step === 'fix');
+  const live = mine.filter((s) => s.live).at(-1) ?? null;
+  const open = live ?? mine.at(-1) ?? null;
+  const helper = e.phase === 'resolving' ? 'resolve' : e.phase === 'fixing' ? 'fix' : null;
+  const current = state.outcome == null && state.step === 'sync';
+  const asking = current && helper && live?.step === helper ? sessionAsking(askingState(state, runningKind), live) : null;
+  let phase;
+  let text;
+  if (state.step === 'wait' && e.tests === 'green') {
+    phase = 'done';
+    text = `${!e.sync || e.sync.state === 'up-to-date' ? 'up to date' : `${base} brought in`} · tests green`;
+  } else if (state.step === 'wait') {
+    phase = 'failed';
+    text = `not ready · ${e.sync?.state === 'unresolved' ? 'clash unresolved' : 'tests red'}`;
+  } else if (!current) {
+    phase = 'pending';
+    text = state.outcome != null ? 'not started' : 'waits on review';
+  } else if (asking) {
+    phase = 'asking';
+    text = askingText(asking);
+  } else if (e.phase === 'testing' || TESTING.has(runningKind)) {
+    phase = 'testing';
+    text = 'testing…';
+  } else if (e.phase === 'prepare' && e.hold) {
+    // holdText's fetch-failed words already end in `retrying`; the row says it once.
+    phase = 'held';
+    text = `${String(e.hold.text ?? e.hold.reason ?? 'the base could not be prepared').replace(/,? retrying$/, '')} · retrying`;
+  } else {
+    phase = 'working';
+    text = helper === 'resolve' ? 'resolving a clash' : helper === 'fix' ? 'fixing tests' : `bringing in ${base}`;
+  }
+  return {
+    id: 'sync',
+    phase,
+    text,
+    since: helper && current ? since[helper] ?? null : null,
+    stoppedAt: asking ? stoppedAt[helper] ?? null : null,
+    tookMs: null,
+    asking,
+    round: 0,
+    testingSince: phase === 'testing' ? running?.since ?? null : null,
+    role: open ? ROLE[open.step] : null,
+    worker: open ? { id: open.id, live: !!open.live, logPath: open.logPath ?? null, cwd: open.cwd ?? null } : null,
+    workers: mine.map((s) => ({ id: s.id, role: ROLE[s.step], n: s.n ?? null, logPath: s.logPath ?? null, cwd: s.cwd ?? null })),
+  };
+}
+
+// The merge row (single-finisher DESIGN §2.11): 'finisher' while the finisher is on (its view in
+// `finisher`, the build's pinned-row words in `text`, its session in `worker` for → to open), 'ready' with
+// the hand-merge line on the fallback wait and once the finisher closed the run (and on a legacy `ready`),
+// 'done' once merged or finished, 'failed' on a red wait, which offers no merge (§2.6), else 'pending'.
+function mergeRow(state, finisher) {
+  const e = state.end ?? {};
+  const o = state.outcome ?? null;
+  const row = { id: 'merge', since: null, stoppedAt: null, tookMs: null, asking: null, finisher: null, worker: null, workers: [] };
+  const line = state.base ? mergeLine(state.base, state.name ?? state.id) : null;
+  if (o === 'finished' || o === 'merged') return { ...row, phase: 'done', text: 'merged' };
+  if (o === 'ready' || o === 'closed') return { ...row, phase: 'ready', text: line };
+  if (o !== null) return { ...row, phase: 'pending', text: 'not started' };
+  if (finisher || e.finisher === 'on') {
+    // The finisher's own words for its state, as its pinned row reads in a build (display.mjs).
+    const t = finisherEntry(finisher ?? {});
+    return { ...row, phase: 'finisher', finisher: finisher ?? null, text: `◆ finisher  ${finisherRow(t).label}`, worker: t.worker };
+  }
+  if (state.step === 'wait' && e.finisher === 'fallback' && e.tests === 'green') return { ...row, phase: 'ready', text: line };
+  // A red wait offers no merge: the row says why, in the sync row's words (user 2026-10-02, T07).
+  if (state.step === 'wait' && e.tests === 'red') return { ...row, phase: 'failed', text: `not ready · ${e.sync?.state === 'unresolved' ? 'clash unresolved' : 'tests red'}` };
+  return { ...row, phase: 'pending', text: 'waits on sync' };
+}
+
 // singleNotifyViews(runState, sessions, { id, remoteOn }) → the episode machine's views (core/notify.mjs),
 // one per step whose live session asks the person (§2.10), one for a sync helper asking (`{name} · resolve`
 // / `· fix`), and the finisher's (finisherNotifyView, id `finisher`: ready for your go, stuck, a parked
@@ -309,7 +391,8 @@ function helperEntry(state, sessions, runningKind) {
 export function singleNotifyViews(runState, sessions = [], { id = null, remoteOn = true } = {}) {
   const views = [];
   for (const step of runState?.steps ?? []) {
-    if (!step.asking || !step.worker?.live) continue;
+    // Only the builder's and the reviewer's rows alert here; a sync helper's comes from `helper` below, once.
+    if (!step.asking || !step.worker?.live || !ROLE[step.id]) continue;
     const s = sessions.find((x) => x.id === step.worker.id);
     if (!s) continue;
     const { title, message } = alertText({
