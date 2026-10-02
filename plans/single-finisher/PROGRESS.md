@@ -7,7 +7,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Status:** Planned, not started.
 **Last updated:** 2026-10-02
-**Next `pir-work` will:** T03 single-end-flow, the first task on the critical path.
+**Next `pir-work` will:** review T07 once implemented, else implement T07 single-finisher-screen.
 
 ## Tasks
 
@@ -20,13 +20,13 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T03 | single-end-flow | — | ✅ | |
 | T04 | single-helpers-skill | — | ✅ | |
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ✅ | |
-| T06 | single-finisher-alerts | T05 | 🔍 | Helper and finisher views in singleNotifyViews; pure singleEndAlerts for hold, red, fallback, finished; 6 tests. Deviations: ROLE already had resolve/fix; singleRunState gains `helper` (T07's sync row may fold it); a resume treats a red wait or fallback it finds as already alerted. |
+| T06 | single-finisher-alerts | T05 | ✅ | Reviewed clean, no fix commit. Probed: a red fallback or re-sync clears the open `ready for your go` (closeFinisher nulls the finisher, resyncing drops to preparing); finisher notes reach its conversation by session id; recorded deviations (`helper` snapshot field, resume treats red/fallback as alerted, hold may re-alert once) accepted. |
 | T07 | single-finisher-screen | T05 | ⬜ | |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T06
+**Review queue:** empty
 
 ## Blocked on the user
 
