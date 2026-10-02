@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-watch | — | ⬜ | |
+| T01 | base-watch | — | 🔍 | `src/core/basewatch.mjs` with `baseWatchVerdict` and `watchDue`, 6 tests; `coordinate.mjs` `watchBase` keeps its I/O and returns the verdict. No deviations. `baseTip` is still skipped when the tip is contained, as before. `npm test` green. |
 | T02 | finisher-for-single | — | ⬜ | |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** *(empty)*
+**Review queue:** T01
 
 ## Blocked on the user
 
