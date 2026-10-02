@@ -6,7 +6,7 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 **Plan reviewed:** 2026-10-01 — 20 fixed, 2 decided with the user
 
 **Status:** Planned, not started.
-**Last updated:** 2026-10-01
+**Last updated:** 2026-10-02
 **Next `pir-work` will:** T03 single-end-flow, the first task on the critical path.
 
 ## Tasks
@@ -15,7 +15,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 
 | # | Task | Depends on | State | Notes |
 |---|---|---|---|---|
-| T01 | base-watch | — | 🔍 | `src/core/basewatch.mjs` with `baseWatchVerdict` and `watchDue`, 6 tests; `coordinate.mjs` `watchBase` keeps its I/O and returns the verdict. No deviations. `baseTip` is still skipped when the tip is contained, as before. `npm test` green. |
+| T01 | base-watch | — | ✅ | Clean, no fix commit. `baseWatchVerdict`/`watchDue` in `src/core/basewatch.mjs`, `watchBase` unchanged in effect, `baseTip` still skipped when contained. Probed: first-pass due-ness differs only at `watchMs` 0, which `baseWatchMs` forbids; localSeen-not-baseSha reference tested. `npm test` green. |
 | T02 | finisher-for-single | — | ⬜ | |
 | T03 | single-end-flow | — | ⬜ | |
 | T04 | single-helpers-skill | — | ⬜ | |
@@ -26,7 +26,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T01
+**Review queue:** empty
 
 ## Blocked on the user
 
