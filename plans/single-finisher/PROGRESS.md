@@ -19,7 +19,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T02 | finisher-for-single | — | ✅ | |
 | T03 | single-end-flow | — | ✅ | |
 | T04 | single-helpers-skill | — | ✅ | |
-| T05 | single-finisher-wiring | T01, T02, T03, T04 | ⬜ | |
+| T05 | single-finisher-wiring | T01, T02, T03, T04 | ✅ | |
 | T06 | single-finisher-alerts | T05 | ⬜ | |
 | T07 | single-finisher-screen | T05 | ⬜ | |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
