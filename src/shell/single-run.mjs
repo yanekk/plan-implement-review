@@ -1066,10 +1066,11 @@ export async function runSingle({ controlDir: givenControlDir, resume = false, d
       // A finisher's status or a line of its conversation (a go) wakes the pass: startFinisher has no
       // activity hook of its own.
       const finisherPaths = finisher ? [join(controlDir, 'finisher', 'status'), finisher.logPath].filter(Boolean) : [];
-      // The wait is unref'd while a session, a command run or the finisher keeps the process alive. A red or
-      // fallback wait, or a held sync, has none of those, and an unref'd wait there would let the program
-      // end mid-run with nothing recorded.
-      const held = !!(holder.current()?.live || command || finisher);
+      // The wait is unref'd while a session or a command run keeps the process alive. A red or fallback
+      // wait, or a held sync, has neither, and an unref'd wait there would let the program end mid-run with
+      // nothing recorded. The finisher never counts: its process can exit while this wait is pending (given
+      // up, onExit wakes nothing), and an unref'd wait would then let the program drain away silently.
+      const held = !!(holder.current()?.live || command);
       await waker.wait([reportsDir, personInbox.inboxDir, ...finisherPaths], pollMs, { watch, signal, unref: held });
     }
   } catch (err) {

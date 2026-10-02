@@ -1472,3 +1472,47 @@ test('canResume: a stopped or crashed single run in sync or wait resumes; a fini
     assert.equal(canResume({ state: 'finished', record: { kind: 'single' }, snapshot: { runState: { kind: 'single', step: 'wait', outcome } } }), false, outcome);
   }
 });
+
+// The finisher's process dies past its restart budget while the program waits on it (finisher-agent's
+// onExit sets givenUp and wakes nothing). Run as its own process, as pir runs it: with no session, no
+// command and the finisher's process gone, nothing but the loop's own wait keeps the program alive.
+test('end: the finisher gives up while the program waits, run as its own process → the program stays up in the fallback and a hand merge ends it merged', async (t) => {
+  const name = 'given-up';
+  const s = setup(t, [
+    { match: BUILDER_MATCH, script: builder(name) },
+    { match: REVIEWER_MATCH, script: reviewer(name) },
+  ]);
+  // A stand-in finisher whose only process exits after a second, given up, as finisher-agent's is.
+  const driver = join(s.dir, 'driver.mjs');
+  writeFileSync(
+    driver,
+    `import { spawn } from 'node:child_process';
+import { runSingle } from ${JSON.stringify(new URL('./single-run.mjs', import.meta.url).href)};
+const startFinisher = () => {
+  let gone = false;
+  spawn('sleep', ['1'], { stdio: 'ignore' }).on('exit', () => { gone = true; });
+  return { logPath: null, drain: () => ({ accepted: [], refused: [], go: null }), phase: () => 'preparing', goGiven: () => false,
+    givenUp: () => gone, view: () => null, resyncing: () => false, resynced: () => false, close: async () => {} };
+};
+process.exitCode = await runSingle({ controlDir: process.argv[2], deps: { startFinisher, pollMs: 500, home: process.env.PIR_HOME } });
+console.log('runSingle returned', process.exitCode);
+`,
+  );
+  const child = spawnChild(process.execPath, [driver, s.controlDir], {
+    env: { ...process.env, PATH: `${s.bin}:${process.env.PATH}`, PIR_HOME: s.home, PIR_RUN: '1', PARALLEL_REMOTE: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  let code;
+  const exited = new Promise((r) => child.on('exit', (c) => r((code = c))));
+  t.after(() => child.kill('SIGKILL'));
+  await waitFor(() => /finisher started/.test(out), `the finisher started\n${out}`);
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.equal(code, undefined, `the program is still running in the fallback wait\n${out}`);
+  assert.equal(stateIn(controlAfter(s, name)).end.fallback, 'gave-up');
+  git(s.root, ['merge', '-q', '--no-edit', `pir/${name}`]);
+  assert.equal(await exited, 0, out);
+  assert.equal(stateIn(controlAfter(s, name)).outcome, 'merged');
+});
