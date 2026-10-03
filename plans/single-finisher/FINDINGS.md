@@ -12,6 +12,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 | 2026-10-03 | 📌 | While a re-sync runs before the go, the finisher's old go question stays open, so the merge row reads `◆ finisher  asking you` in amber; the person's answer to it does not count. Same in builds. |
 | 2026-10-03 | 📌 | A resume after a `merged` sync calls `resynced` (§2.10), so a resumed finisher must write a fresh `ready` before a go counts. The fake cannot; the drill's stop/resume runs on an up-to-date sync. T10 should watch it live. |
 | 2026-10-03 | 📌 | Once the sync settles, its row's role reads `—` even after a resolve or fix helper ran; → still opens that helper's conversation. |
+| 2026-10-02 | 📌 | CLAUDE.md's command table row for `@repo/single` still says pir "hands over the merge command"; single runs now end with the finisher and `Go`. Outside T09's files; left for the person. |
 | 2026-10-02 | 📌 | T07's pty rig does not drive the clash (`sync  resolving a clash`) or red-after-fix (`✗ not ready`) runs; they are covered at frame and reducer level only. T08's drill must drive both through the real screen. |
 | 2026-10-02 | 🔄 | User decided a red wait's merge row reads `not ready · tests red` (or `· clash unresolved`) in red, the sync row's words; DESIGN §2.11's table named none. |
 | 2026-10-02 | 📌 | For T06: singleNotifyViews skips the new `sync` step (`!ROLE[step.id]`), so a helper's asking alert is still to add; the single drill asserts only that no `ready to merge` alert is sent. |

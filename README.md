@@ -50,7 +50,7 @@ once per repo ([below](#one-setting-per-repo-the-base-branch)).
 | `pir plan ["brief"]` | Run the planning and the plan review below inside `pir`, on a branch of their own, answered in `pir`'s screen; when the plan is reviewed, ask whether to start the build. |
 | `/pir-plan` | Brainstorm the requirements, confirm the direction with a throwaway mock when the thing has a feel to it, probe the tech on the actual machine, survey what the codebase already does so nothing gets built twice, settle the architecture, split the work into session-sized tasks with their dependencies, write it all to `plans/{slug}/`. Writes no product code. |
 | `/pir-review-plan {slug}` | Read the finished plan back with fresh eyes, before a line of it is built. Fixes what has one right answer, brings everything else to you as a decision, applies what you decide, marks the plan reviewed. Runs once. |
-| `@repo/single {what to change}` | Typed in `pir`'s dashboard box: make one small change without a plan. A builder session makes and commits it, `pir` runs your tests, a fresh reviewer checks and fixes it, and you get the merge command. See [below](#small-changes-without-a-plan--reposingle). |
+| `@repo/single {what to change}` | Typed in `pir`'s dashboard box: make one small change without a plan. A builder session makes and commits it, `pir` runs your tests, a fresh reviewer checks and fixes it, and the same finisher a build ends with merges it after your `Go`. See [below](#small-changes-without-a-plan--reposingle). |
 | `pir start {slug}` | Run the reviewed plan in parallel, from a terminal inside the repo. Starts a coordinator in the background that builds every task whose dependencies are done, each in its own worker session, has a different worker review it, and merges it into the plan's feature branch — then drops you into a live view of every task. A coordinator agent answers the workers' routine questions for you, and at the end a finisher merges into the base branch after your `Go`; `--no-coordinator` runs without either. |
 
 `/pir-plan` and `/pir-review-plan` are slash commands inside Claude Code. `pir` is a shell command,
@@ -172,8 +172,13 @@ box instead:
 The builder makes the change, commits it and names the branch. `pir` then runs your tests itself; if
 they fail, the builder gets the failure and fixes it. Once they pass, a brand-new **reviewer** that
 never saw the change being written reads it against what you asked, fixes what it finds, and `pir` runs
-the tests again. The row then reads `ready to merge`, and the run shows the one command to run:
-`git switch {base} && git merge pir/{name}`. Once your merge lands, the row turns `merged`.
+the tests again. `pir` then brings your base branch's newer commits into the run's branch and tests
+once more, holding one more session to settle a clash or fix the tests if it has to. Then the
+**finisher**, the same one a build ends with ([docs/finisher.md](docs/finisher.md)), prepares the merge
+and asks you one `Go` question; the row reads `ready for your go`. After your `Go` it merges into the
+base and does what the project's finishing rules add, and the row turns `finished`. You can still merge
+by hand before saying `Go`; `pir` sees it and ends the run. If the tests are red after the sync, the row
+reads `not ready`, no merge is offered, and the run waits for the base to move again.
 
 It needs the repo's install and test commands, beside the base branch in `.pir/settings.json` (or in
 your own `~/.pir/{repo}/settings.json`, whose `setup` or `test` list, when it has one, replaces the
@@ -193,15 +198,15 @@ What that gets you:
   the tests on the untouched starting point and tells the session which it is. After three failed
   rounds the session stops and asks you how to go on instead of looping.
 - **Nobody reviews their own change**, a one-line typo included.
-- **You answer every question**, in `pir` or from your phone (alerts work as for a build). There is no
-  coordinator agent and no finisher: you merge by hand. A session that finds the change too big
+- **You answer every question**, in `pir` or from your phone (alerts work as for a build), and the
+  `Go` is yours. There is no coordinator agent. A session that finds the change too big
   recommends `/plan`, or tells you if there is nothing to change, and stops only with your agreement.
 - **Stop, resume and remove** work as for a planning run (`Ctrl+S`, `Ctrl+R`, `Ctrl+X` twice).
 
-Limits: it is started from the dashboard box only (there is no `pir single` command); `pir` does not
-bring newer base-branch commits into the run's branch, so a clash shows in your own merge; and a test
-run has no time limit, so one that hangs keeps the row on `testing` until you stop it. The full
-behaviour is in [docs/single-runs.md](docs/single-runs.md).
+Limits: it is started from the dashboard box only (there is no `pir single` command); newer base-branch
+commits come in only after the review, not while the builder or reviewer works; the finisher cannot be
+turned off; and a test run has no time limit, so one that hangs keeps the row on `testing` until you
+stop it. The full behaviour is in [docs/single-runs.md](docs/single-runs.md).
 
 ## You set how much the agents do on their own
 
@@ -387,7 +392,8 @@ Write it as instructions to a careful colleague, for example:
 Do not push and do not open a pull request.
 ```
 
-Details, the exact rules the program enforces and known limits are in
+A [single run](#small-changes-without-a-plan--reposingle) ends with the same finisher, the same rules
+file and the same `Go`. Details, the exact rules the program enforces and known limits are in
 [docs/finisher.md](docs/finisher.md).
 
 ## Watching a run — `pir start {slug}` and `pir`

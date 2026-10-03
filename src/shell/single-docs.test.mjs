@@ -8,9 +8,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { COMMANDS, NOTES, headLine, startSingleFailedNote } from '../core/planbox.mjs';
-import { RED_LIMIT, redMessage, leftoverMessage, singleProgress, singleSessionName } from '../core/singleflow.mjs';
+import { RED_LIMIT, redMessage, leftoverMessage, singleProgress, singleSessionName, helperInstruction } from '../core/singleflow.mjs';
 import { commandsRefusalText } from '../core/basebranch.mjs';
-import { singleEndAlert, alertText } from '../core/notify.mjs';
+import { singleEndAlert, alertText, endAlert, holdAlert, finisherAlert } from '../core/notify.mjs';
+import { finisherOpening } from '../core/finisher-brief.mjs';
+import { singleChecks, singleRunState } from './single-run.mjs';
 import { singleNoSessionNote } from '../core/dashboard.mjs';
 import { SINGLE_HINT } from './list-view.mjs';
 import { SINGLE_FOLLOW_LINE, MERGED_CHECK_MS } from './pir-tui.mjs';
@@ -19,6 +21,7 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 // Markdown wraps prose and table cells across lines; a quoted text is compared with the wrapping undone.
 const flat = (s) => s.replace(/\s*\n\s*(?:\|\s*)?/g, ' ').replace(/\s+/g, ' ');
 const DOC = flat(read('../../docs/single-runs.md'));
+const FINISHER = flat(read('../../docs/finisher.md'));
 const PLANNING = flat(read('../../docs/planning-runs.md'));
 const README = read('../../README.md');
 
@@ -110,4 +113,84 @@ test('docs/README.md links single-runs.md; README.md links it and names @repo/si
   assert.match(README, /## Small changes without a plan — `@repo\/single`/);
   assert.match(README, /\(#small-changes-without-a-plan--reposingle\)/);
   assert.match(README, /pir-single\//);
+});
+
+// single-finisher T09: the end sequence's texts — the sync, its helpers, the finisher, the rows, the alerts.
+test('docs/single-runs.md: the end sequence’s cells, names, notes and opening lines are the code’s', () => {
+  const cells = [
+    { step: 'sync', phase: 'working' },
+    { step: 'sync', phase: 'testing' },
+    { step: 'wait', end: { tests: 'green' } },
+    { step: 'wait', end: { tests: 'red' } },
+    { step: 'wait', outcome: 'finished' },
+    { step: 'wait', outcome: 'merged' },
+    { step: 'wait', outcome: 'closed' },
+  ];
+  for (const rs of cells) has(DOC, `\`${singleProgress(rs)}\``, 'single-runs.md');
+  for (const step of ['resolve', 'fix']) {
+    has(DOC, `\`${singleSessionName({ repo: '{repo}', run: '{name}', step })}\``, 'single-runs.md');
+  }
+  has(DOC, '`{repo} / {name} / single / finisher`', 'single-runs.md');
+  has(FINISHER, '`{repo} / {name} / single / finisher`', 'finisher.md');
+  has(DOC, singleNoSessionNote({ id: 'sync' }, { base: '{base}' }), 'single-runs.md');
+  const head = helperInstruction({ role: 'fix', name: '{name}', base: '{base}', reportsDir: 'R' }).split('\n')[0];
+  has(DOC, head.slice(0, head.indexOf(' Reports folder')).replace('fix', '{role}'), 'single-runs.md');
+  const opening = finisherOpening({ kind: 'single', slug: '{name}', branch: 'pir/{name}', base: '{base}', promptPath: 'P' }).split('\n')[0];
+  // The whole first line, from its first word: the doc says the opening "begins" with it.
+  has(FINISHER, `begins \`${opening}\``, 'finisher.md');
+  const resolved = singleChecks({
+    kind: 'resolved', name: 'n', run: { name: 'n' }, worktree: 'w',
+    git: () => ({ ok: true, stdout: '' }), syncPending: () => true,
+  });
+  has(DOC, resolved.failures[0], 'single-runs.md');
+});
+
+test('docs/single-runs.md: the sync and merge rows read as singleRunState paints them', () => {
+  const rows = (state, finisher = null) => {
+    const steps = singleRunState({ id: 'single-0000', name: '{name}', base: '{base}', outcome: null, sessions: {}, ...state }, { finisher }).steps;
+    return Object.fromEntries(steps.map((st) => [st.id, st.text]));
+  };
+  has(DOC, `\`${rows({ step: 'review' }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'sync', end: { phase: 'prepare' } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'sync', end: { phase: 'resolving' } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'sync', end: { phase: 'fixing' } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'sync', end: { phase: 'testing' } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'wait', end: { tests: 'green', sync: { state: 'up-to-date' } } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'wait', end: { tests: 'green', sync: { state: 'merged' } } }).sync}\``, 'single-runs.md');
+  const red = rows({ step: 'wait', end: { tests: 'red', sync: { state: 'merged' } } });
+  has(DOC, `\`${red.sync}\``, 'single-runs.md');
+  has(DOC, `\`${red.merge}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'wait', end: { tests: 'red', sync: { state: 'unresolved' } } }).sync}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'sync', end: { phase: 'prepare' } }).merge}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'wait', end: { tests: 'green', finisher: 'fallback', fallback: 'failed' } }).merge}\``, 'single-runs.md');
+  has(DOC, `\`${rows({ step: 'wait', outcome: 'finished' }).merge}\``, 'single-runs.md');
+  assert.match(rows({ step: 'wait', end: { tests: 'green', finisher: 'on' } }).merge, /^◆ finisher {2}/);
+});
+
+test('docs/single-runs.md: the end sequence’s alerts are the code’s', () => {
+  has(DOC, `\`${holdAlert({ slug: '{name}', hold: { text: 'x' } }).title}\``, 'single-runs.md');
+  has(DOC, `\`${endAlert({ slug: '{name}', ready: false }).title}\``, 'single-runs.md');
+  has(DOC, `\`${endAlert({ slug: '{name}', ready: false, reason: '{reason}' }).message}\``, 'single-runs.md');
+  has(DOC, `\`${endAlert({ slug: '{name}', ready: false, unresolved: true, base: '{base}' }).message}\``, 'single-runs.md');
+  for (const phase of ['awaiting-go', 'stuck', 'done', 'gave-up']) {
+    has(DOC, `\`${finisherAlert({ slug: '{name}', phase, steps: ['x'], summary: 's' }).title}\``, 'single-runs.md');
+  }
+  assert.equal(alertText({ plan: '{name}', name: 'resolve', kind: 'question', lastText: 'x' }).title, '{name} · resolve');
+  has(DOC, '`{name} · resolve`', 'single-runs.md');
+  has(DOC, '`{name} · fix`', 'single-runs.md');
+});
+
+test('no doc says a single run has no finisher; the README names its finisher and links the doc', () => {
+  // Build-only sentences (`--no-coordinator` has no finisher) are fine; a single run's are not.
+  // A dropped run gets "no sync and no finisher"; the old claims were "No finisher" and "has no finisher".
+  assert.doesNotMatch(DOC, /\bNo finisher|has no finisher|and no finisher: you merge/, 'single-runs.md should not say a single run has no finisher');
+  for (const f of ['finisher.md', 'human-flow.md', 'control-folder.md', 'detached-runs.md', 'README.md']) {
+    const text = flat(read(`../../docs/${f}`));
+    assert.doesNotMatch(text, /single run[^.]*no finisher/i, `docs/${f} should not say a single run has no finisher`);
+  }
+  const section = README.slice(README.indexOf('## Small changes without a plan'), README.indexOf('## You set how much'));
+  assert.match(section, /finisher/);
+  assert.match(section, /`Go`/);
+  assert.match(section, /\]\(docs\/single-runs\.md\)/);
+  assert.doesNotMatch(flat(section), /no finisher/i);
 });
