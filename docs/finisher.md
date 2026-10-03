@@ -60,8 +60,8 @@ passed to `startFinisher`:
   folder, `plans/{name}/.parallel/single/finisher/`, its conversation in
   `plans/{name}/.parallel/single/conversations/`, and its log lines in that folder's `run.log` rather
   than `control.log`.
-- The opening instruction (`finisherOpening` with `kind: 'single'`) begins `You are the finisher of the
-  single run `{name}`: a small change, built and reviewed, whose branch is ready to merge into `{base}`.`,
+- The opening instruction (`finisherOpening` with `kind: 'single'`) begins `Invoke the pir-finisher skill and
+  follow it. You are the finisher of the single run `{name}`: a small change, built and reviewed, whose branch is ready to merge into `{base}`.`,
   has no `Plan:` or `Report:` line, and adds `Change asked for: {prompt.md}`. The skill tells it to read
   that file and `git log --oneline {target}..pir/{name}` in place of `REPORT.md`.
 - There is no coordinator agent: the run's person inbox is wrapped with `withAgent(holder.platform, () =>

@@ -136,7 +136,8 @@ test('docs/single-runs.md: the end sequence’s cells, names, notes and opening 
   const head = helperInstruction({ role: 'fix', name: '{name}', base: '{base}', reportsDir: 'R' }).split('\n')[0];
   has(DOC, head.slice(0, head.indexOf(' Reports folder')).replace('fix', '{role}'), 'single-runs.md');
   const opening = finisherOpening({ kind: 'single', slug: '{name}', branch: 'pir/{name}', base: '{base}', promptPath: 'P' }).split('\n')[0];
-  has(FINISHER, opening.replace('Invoke the pir-finisher skill and follow it. ', ''), 'finisher.md');
+  // The whole first line, from its first word: the doc says the opening "begins" with it.
+  has(FINISHER, `begins \`${opening}\``, 'finisher.md');
   const resolved = singleChecks({
     kind: 'resolved', name: 'n', run: { name: 'n' }, worktree: 'w',
     git: () => ({ ok: true, stdout: '' }), syncPending: () => true,
