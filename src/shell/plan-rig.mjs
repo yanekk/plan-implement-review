@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openScreen as openScreenRaw, driveScreen as driveScreenRaw } from './conversation-rig.mjs';
 import { writeClaudeShim } from './fake/claude-shim.mjs';
-import { BANG_HAND_SLUG, BUILDER_MATCH, COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH, bangBuildPlanFiles, bangBuildScripts, bangBuilderScript, bangPlannerScript, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, singleBuilderScript, singleReviewerScript, workerScripts } from './fake/sessions.mjs';
+import { BANG_HAND_SLUG, BUILDER_MATCH, COORDINATOR_MATCH, DRILL_SLUG, HELPER_DRILL_SLUG, PLANNER_MATCH, REVIEWER_MATCH, SINGLE_FINISHER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH, bangBuildPlanFiles, bangBuildScripts, bangBuilderScript, bangPlannerScript, coordinatorScript, drillPlanFiles, drillScripts, helperDrillPlanFiles, helperDrillScripts, noPlanScript, plannerScript, reviewerScript, singleBuilderScript, singleFinisherScript, singleReviewerScript, workerScripts } from './fake/sessions.mjs';
 import { startSingleRun } from './launch.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from './fake/claude-stream.mjs';
 
@@ -99,7 +99,8 @@ export function withUsageEvent(entries, match, event = usageEvent()) {
   });
 }
 
-// scriptSet(name) → the [{ match, script }] entries of a PIR_FAKE_CLAUDE_SCRIPTS file:
+// scriptSet(name, { repoDir }) → the [{ match, script }] entries of a PIR_FAKE_CLAUDE_SCRIPTS file (a single
+// set scripts its finisher only when given the scratch repo, repoDir, which names its status folder):
 //   happy          the planner asks one question and plans PLAN_RIG_SLUG; the reviewer reviews; workers build
 //   no-plan        the planner drops `no-plan` straight away
 //   taken-slug     as happy, but PLAN_RIG_SLUG is taken (startPlanRig makes the branch): after its first
@@ -135,12 +136,12 @@ export function withUsageEvent(entries, match, event = usageEvent()) {
 //   single-dropped  the builder asks SINGLE_RIG_DROP_ASK in plain words and reports dropped once the
 //                   person replies
 //   single-taken    the builder first names SINGLE_RIG_TAKEN, which is taken, then SINGLE_RIG_NAME
-export function scriptSet(name = 'happy') {
+export function scriptSet(name = 'happy', { repoDir = null } = {}) {
   if (name === 'coordinator-drill') return drillScripts();
   if (name === 'end-helper') return helperDrillScripts();
   if (name === 'bang-build') return bangBuildScripts();
   if (name === 'bang-plan') return [{ match: PLANNER_MATCH, script: bangPlannerScript() }, ...scriptSet('happy').filter((e) => e.match !== PLANNER_MATCH)];
-  if (name === 'bang-single') return [{ match: BUILDER_MATCH, script: bangBuilderScript() }, ...scriptSet('single-happy').filter((e) => e.match !== BUILDER_MATCH)];
+  if (name === 'bang-single') return [{ match: BUILDER_MATCH, script: bangBuilderScript() }, ...scriptSet('single-happy', { repoDir }).filter((e) => e.match !== BUILDER_MATCH)];
   if (SINGLE_SCRIPT_SETS.includes(name)) {
     const builder = {
       'single-happy': {},
@@ -149,9 +150,15 @@ export function scriptSet(name = 'happy') {
       'single-dropped': { dropAsk: SINGLE_RIG_DROP_ASK },
       'single-taken': { takenName: SINGLE_RIG_TAKEN },
     }[name];
+    // The finisher (single-finisher T07): its status folder is under the run's renamed control folder, so
+    // it is scripted only where the scratch repo is known (startPlanRig).
+    const finisher = repoDir
+      ? [{ match: SINGLE_FINISHER_MATCH, script: singleFinisherScript({ name: SINGLE_RIG_NAME, statusDir: join(repoDir, 'plans', SINGLE_RIG_NAME, '.parallel', 'single', 'finisher', 'status'), repoRoot: repoDir }) }]
+      : [];
     return [
       { match: BUILDER_MATCH, script: singleBuilderScript({ name: SINGLE_RIG_NAME, ...builder }) },
       { match: SINGLE_REVIEWER_MATCH, script: singleReviewerScript({ name: SINGLE_RIG_NAME }) },
+      ...finisher,
       ...scriptSet('happy'),
     ];
   }
@@ -294,7 +301,6 @@ const SETTLE_MS = 30000;
 // cleanup() deletes the root unless `keep`; idempotent. It does not stop programs a test started: a test
 // that launches a run stops it first, as pir's own stop would, then awaits settle() for the stragglers.
 export function startPlanRig({ into = null, scripts = 'happy', keep = false, baseEnv = process.env, base = 'main', remoteAhead = false, settings = true, holdReportMs = 0 } = {}) {
-  const entries = holdReportMs > 0 ? withReportHold(scriptSet(scripts), holdReportMs) : scriptSet(scripts);
   let root;
   if (into) {
     root = resolve(into);
@@ -304,6 +310,7 @@ export function startPlanRig({ into = null, scripts = 'happy', keep = false, bas
     root = mkdtempSync(join(tmpdir(), 'pir-plan-rig-'));
   }
   const repoDir = join(root, 'repo');
+  const entries = holdReportMs > 0 ? withReportHold(scriptSet(scripts, { repoDir }), holdReportMs) : scriptSet(scripts, { repoDir });
   const home = join(root, 'home');
   const shimDir = join(root, 'bin');
   mkdirSync(repoDir);

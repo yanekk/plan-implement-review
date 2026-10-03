@@ -94,6 +94,7 @@ import { startCoordinatorAgent, withAgent } from './coordinator-agent.mjs';
 import { startFinisher } from './finisher-agent.mjs';
 import { handoffFor } from '../core/coordinator-brief.mjs';
 import { HAND_TOOL } from '../core/bang.mjs';
+import { finisherScript as sharedFinisherScript, finisherDoneSummary, finisherStuckSummary } from './fake/sessions.mjs';
 
 export const RIG_SLUG = 'rig';
 // The scenarios whose run waits at its end on the finisher (finisher T07, T09).
@@ -270,95 +271,19 @@ export function scenarioScript(name = 'tour', { paceMs = 300, workMs = 4000, ste
   throw new Error(`unknown scenario "${name}" (tour, long, coordinator, helpers, bang, hand, hand-drill, helpers-buried, ${FINISHER_SCENARIOS.join(', ')})`);
 }
 
-// The finisher scenario's finisher (finisher T07): the real finisher-agent session on the fake. The fake
-// writes its own status files (a `sh` step, outside the fence, which is the fake's and not what is tested)
-// into `statusDir`, named in order, each written aside and renamed so pir never reads half of one.
-export const RIG_GO_QUESTION = 'Ready to finish? 2 steps from project rules';
-export const RIG_FINISHER_SUMMARY = 'The branch is clean and its tests pass; main has not moved.';
-export const RIG_RETRY_QUESTION = 'Retry the install? 1 step from project rules';
-export const RIG_STUCK_SUMMARY = 'Merged pir/rig into main; ./install.sh failed: npm ci exited 1 (network unreachable). Nothing else ran.';
-export const RIG_DONE_SUMMARY = 'Merged pir/rig into main and ran ./install.sh.';
-export const RIG_RESERVED_COMMAND = 'rm -rf dist/';
+// The finisher scenario's finisher (finisher T07) is the shared fake finisher in fake/sessions.mjs, which a
+// single run's finisher tests use too (single-finisher T05); the rig's merges pir/rig and starts with the
+// rig's init event (its slash commands).
+export {
+  FINISHER_GO_QUESTION as RIG_GO_QUESTION,
+  FINISHER_SUMMARY as RIG_FINISHER_SUMMARY,
+  FINISHER_RETRY_QUESTION as RIG_RETRY_QUESTION,
+  FINISHER_RESERVED_COMMAND as RIG_RESERVED_COMMAND,
+} from './fake/sessions.mjs';
+export const RIG_STUCK_SUMMARY = finisherStuckSummary(`pir/${RIG_SLUG}`);
+export const RIG_DONE_SUMMARY = finisherDoneSummary(`pir/${RIG_SLUG}`);
 export function finisherScript({ statusDir, repoRoot, finishingMs = 3000, variant = 'finisher' }) {
-  const writeStatus = (name, status) => {
-    const json = JSON.stringify(status).replace(/'/g, `'\\''`);
-    const dest = join(statusDir, name);
-    return { sh: `printf '%s' '${json}' > '${dest}.tmp' && mv '${dest}.tmp' '${dest}'` };
-  };
-  const steps = [`git -C ${repoRoot} merge ${`pir/${RIG_SLUG}`}`, './install.sh'];
-  const say = (text) => [{ emit: assistantText(text) }];
-  // The go question (DESIGN §2.7): header and options exactly `Go` and `Not yet`.
-  const goQuestion = (id, question, n) => ({
-    tool: {
-      id,
-      name: 'AskUserQuestion',
-      input: { questions: [{ question, header: 'Go', multiSelect: false, options: [{ label: 'Go', description: `run the ${n} step${n === 1 ? '' : 's'}` }, { label: 'Not yet', description: 'change nothing' }] }] },
-    },
-  });
-  const bash = (id, command, description) => ({ tool: { id, name: 'Bash', input: { command, description } } });
-  const done = [
-    writeStatus('9-done.json', { kind: 'done', summary: RIG_DONE_SUMMARY }),
-    ...say('Done: merged and installed.'),
-    { emit: resultEvent('success', 'finished') },
-    { chat: { workMs: 300, init: RIG_INIT } },
-  ];
-  const opening = [
-    { await: 'user' },
-    { emit: RIG_INIT },
-    ...say("I'm the rig's pretend finisher. I looked at the branch and main without changing anything."),
-    writeStatus('1-ready.json', { kind: 'ready', rules: join(repoRoot, '.pir', 'rules', 'on-finish.md'), summary: RIG_FINISHER_SUMMARY, steps }),
-    ...say(`${RIG_FINISHER_SUMMARY}\n\nThe steps, once you say go:\n1. ${steps[0]}\n2. ${steps[1]}`),
-    goQuestion('go1', RIG_GO_QUESTION, 2),
-  ];
-  // What the finisher does once the go is in: the merge, then the variant's own end.
-  const merge = [bash('merge1', steps[0], 'Merge the branch into main'), ...say('Merged. Running the install.'), { sleep: finishingMs }];
-  if (variant === 'finisher') return [...opening, ...merge, ...done];
-  if (variant === 'finisher-notyet') {
-    // A `Not yet` is not a go (DESIGN §2.7): the finisher ends its turn and waits for the person to write.
-    return [
-      ...opening,
-      ...say("Not yet, then. Nothing has changed; tell me when you want me to ask again."),
-      { emit: resultEvent('success', 'waiting') },
-      { await: 'user' },
-      { emit: RIG_INIT },
-      ...say('Asking again.'),
-      goQuestion('go2', RIG_GO_QUESTION, 2),
-      ...merge,
-      ...done,
-    ];
-  }
-  if (variant === 'finisher-stuck') {
-    // A step fails after the go (DESIGN §2.12): stuck with a proposal, the go question again, and only the
-    // second go runs the retry.
-    return [
-      ...opening,
-      bash('merge1', steps[0], 'Merge the branch into main'),
-      ...say('Merged. Running the install.'),
-      bash('install1', steps[1], 'Install the engine and skills'),
-      { sleep: finishingMs },
-      writeStatus('2-stuck.json', { kind: 'stuck', summary: RIG_STUCK_SUMMARY, proposal: 'retry the install once the network is back', steps: [steps[1]] }),
-      ...say(`${RIG_STUCK_SUMMARY}\n\nI propose to retry the install. The step, once you say go:\n1. ${steps[1]}`),
-      goQuestion('go2', RIG_RETRY_QUESTION, 1),
-      bash('install2', steps[1], 'Install the engine and skills'),
-      ...say('Installed.'),
-      { sleep: finishingMs },
-      ...done,
-    ];
-  }
-  if (variant === 'finisher-reserved') {
-    // A destructive command after the go is still the person's (DESIGN §2.5): parked, answered in the
-    // finisher's conversation.
-    return [
-      ...opening,
-      bash('merge1', steps[0], 'Merge the branch into main'),
-      ...say('Merged. The old build folder is in the way of the install; clearing it.'),
-      bash('clear1', RIG_RESERVED_COMMAND, 'Delete the old build folder'),
-      ...say('Cleared. Running the install.'),
-      { sleep: finishingMs },
-      ...done,
-    ];
-  }
-  throw new Error(`unknown finisher variant "${variant}"`);
+  return sharedFinisherScript({ statusDir, repoRoot, finishingMs, variant, branch: `pir/${RIG_SLUG}`, init: RIG_INIT });
 }
 
 // The helpers scenario's two helpers, with ids shaped like the real ones (plan-0339).

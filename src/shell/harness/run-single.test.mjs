@@ -5,18 +5,32 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { builderHeadFrom, noteProcs, runSingleScenario, singleRecordOf } from './run.mjs';
-import { checkScenario, singleBuilderCommitGreen, singleIndexUnderName, singleNoSessionLeft, singleReady, baseUntouched } from './assertions.mjs';
+import { builderHeadFrom, finisherLink, noteProcs, runSingleScenario, singleRecordOf } from './run.mjs';
+import {
+  checkScenario,
+  singleBuilderCommitGreen,
+  singleFinished,
+  singleFinisherFinishedAfterGo,
+  singleFinisherWaitedSynced,
+  singleGoLeftToPerson,
+  singleIndexUnderName,
+  singleNoSessionLeft,
+  singleReady,
+  baseUntouched,
+} from './assertions.mjs';
 import { parseLogName } from './capture.mjs';
 import { defineScenario } from './scenario.mjs';
 import { indexDir, writeRecord } from '../index-store.mjs';
 import { writeClaudeShim } from '../fake/claude-shim.mjs';
-import { BUILDER_MATCH, SINGLE_REVIEWER_MATCH, singleReviewerScript } from '../fake/sessions.mjs';
+import { BUILDER_MATCH, SINGLE_FINISHER_MATCH, SINGLE_REVIEWER_MATCH, singleFinisherScript, singleReviewerScript } from '../fake/sessions.mjs';
+import { dropPersonInput } from '../person-inbox.mjs';
+import { workerActivity } from '../../core/stream.mjs';
+import { parseLog } from './capture.mjs';
 import { assistantText, canUseTool, initEvent, resultEvent, toolUse } from '../fake/claude-stream.mjs';
 import { REPLY } from './fixtures/single-run-live.mjs';
 
@@ -199,7 +213,37 @@ function builderScript(name) {
   ];
 }
 
-test('a dry pass of the single-run-live scenario with the fake claude on PATH reaches every fact green', { timeout: 180_000 }, async (t) => {
+// The dry pass of single-finisher-live (T10), which took over the single-run-live dry pass skipped since T05:
+// a single run no longer ends `ready`, it ends on the finisher's done after the person's go. The builder asks
+// twice (the canned reply, as words and on the form), the runner moves main during the build, the sync merges
+// it in, the fake finisher waits for the go, and only this test, playing the person, answers it.
+const DRY_NAME = 'fix-add-all';
+
+// The fake finisher, with the rules' FINISHED written once its merge ran.
+function dryFinisherScript(repoDir) {
+  const statusDir = join(repoDir, 'plans', DRY_NAME, '.parallel', 'single', 'finisher', 'status');
+  const script = singleFinisherScript({ name: DRY_NAME, statusDir, repoRoot: repoDir });
+  const at = script.findIndex((st) => typeof st.sh === 'string' && st.sh.includes('finisher-merge'));
+  assert.ok(at > 0, 'the fake finisher merges for real');
+  const finished = { sh: `printf 'finished\\n' > ${q(join(repoDir, 'FINISHED'))}` };
+  return [...script.slice(0, at + 1), finished, ...script.slice(at + 1)];
+}
+
+// The person: answers the finisher's open go question `Go`, as the conversation view drops it. True once sent.
+function personSaysGo(gone) {
+  return ({ control }) => {
+    const session = JSON.parse(readFileSync(join(control, 'finisher', 'session.json'), 'utf8'));
+    const dir = join(control, 'conversations');
+    const log = readdirSync(dir).filter((f) => /^finisher-\d+\.ndjson$/.test(f)).sort().at(-1);
+    const ask = log ? workerActivity(parseLog(readFileSync(join(dir, log), 'utf8'))).pending.find((r) => r.kind === 'questions') : null;
+    if (!ask) return false;
+    const r = dropPersonInput(control, { to: session.sessionId, kind: 'answers', requestId: ask.requestId, answers: { [ask.questions[0].question]: 'Go' } }, { coordinatorAlive: true });
+    if (r.ok) gone.push(ask.requestId);
+    return r.ok;
+  };
+}
+
+test('a dry pass of the single-finisher-live scenario with the fake claude on PATH reaches every fact green, the go left to the person', { timeout: 180_000 }, async (t) => {
   const root = tmp('pir-single-dry-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home');
@@ -212,8 +256,9 @@ test('a dry pass of the single-run-live scenario with the fake claude on PATH re
   writeFileSync(
     scriptsFile,
     JSON.stringify([
-      { match: BUILDER_MATCH, script: builderScript('fix-add-all') },
-      { match: SINGLE_REVIEWER_MATCH, script: singleReviewerScript({ name: 'fix-add-all' }) },
+      { match: BUILDER_MATCH, script: builderScript(DRY_NAME) },
+      { match: SINGLE_REVIEWER_MATCH, script: singleReviewerScript({ name: DRY_NAME }) },
+      { match: SINGLE_FINISHER_MATCH, script: dryFinisherScript(repoDir) },
     ]),
   );
   const received = join(bin, 'fake-received.ndjson');
@@ -222,19 +267,83 @@ test('a dry pass of the single-run-live scenario with the fake claude on PATH re
   for (const k of ['PIR_HOME', 'PARALLEL_ALLOW_HERE', 'PIR_FAKE_CLAUDE_SCRIPT', 'PIR_FAKE_CLAUDE_SCRIPTS', 'PIR_FAKE_CLAUDE_RECEIVED', 'NODE_TEST_CONTEXT']) delete baseEnv[k];
 
   const lines = [];
-  const r = await runSingleScenario({ fixtureId: 'single-run-live', scratchDir: repoDir, baseEnv, pollMs: 250, timeoutMs: 150_000, log: (l) => lines.push(l) });
+  const gone = [];
+  const r = await runSingleScenario({ fixtureId: 'single-finisher-live', scratchDir: repoDir, baseEnv, pollMs: 250, timeoutMs: 150_000, onAwaitingGo: personSaysGo(gone), log: (l) => lines.push(l) });
   const why = `${r.reason}\n${r.report.facts.map((f) => `${f.pass ? '✓' : '✗'} ${f.id}: ${f.detail} ${f.evidence.join(' | ')}`).join('\n')}\n--- log\n${lines.join('\n')}`;
   assert.equal(r.reason, 'completed', why);
   assert.equal(r.ok, true, why);
+  assert.equal(gone.length, 1, 'this test gave the one go');
 
   // The canned reply reached the builder twice: as words, and typed on the question form.
   const sent = readFileSync(received, 'utf8');
   assert.ok(sent.split(REPLY).length - 1 >= 2, `the builder was sent "${REPLY}" as words and as an answer\n${why}`);
   assert.ok(lines.some((l) => l.includes('said') && l.includes('reply:build-1.ndjson')), why);
+  // The answerer left the go question alone: none of its lines names the finisher's request.
+  assert.ok(!lines.some((l) => l.startsWith('answerer:') && l.includes(gone[0])), why);
+  // The person was told where to answer.
+  assert.ok(lines.some((l) => l.includes(`PIR_HOME=${join(repoDir, '.pir-home')} node `) && l.includes(join('src', 'shell', 'pir.mjs'))), why);
   assert.ok(existsSync(join(repoDir, '.pir-home', '.pir', 'runs')), 'PIR_HOME is the scratch one');
   const capture = JSON.parse(readFileSync(join(r.bundleDir, 'single-run.json'), 'utf8'));
-  assert.equal(capture.name, 'fix-add-all');
+  assert.equal(capture.name, DRY_NAME);
   assert.equal(capture.builderCommits.length, 1, why);
-  assert.equal(capture.branchCommits.length, 2, 'the builder commit and the reviewer commit');
+  assert.equal(capture.finisher.moved.step, 'build', 'main moved while the build ran');
   assert.ok(existsSync(join(r.bundleDir, 'conversations', 'build-1.ndjson')));
+});
+
+// --- The finisher facts over a hand-written capture -----------------------------------------------
+
+const finGood = {
+  ...good,
+  outcome: 'finished',
+  finisher: {
+    moved: { at: 't0', sha: 'aaa', step: 'build' },
+    beforeGo: { at: 't1', phase: 'awaiting-go', baseSha: 'aaa', branchInBase: false, movedInBase: true, syncMerges: ['sync main into pir/fix-add'], finishedFile: false },
+    afterRun: { at: 't2', baseSha: 'bbb', branchInBase: true, movedInBase: true, syncMerges: [], finishedFile: true, ledger: [{ kind: 'go', by: 'person', from: 'awaiting-go', to: 'finishing', t: 't1' }] },
+    sessionId: 'fin-1',
+    link: null,
+    answeredTo: ['build-1'],
+  },
+};
+const finFacts = [singleFinished(), singleFinisherWaitedSynced(), singleGoLeftToPerson(), singleFinisherFinishedAfterGo()];
+const finVerdict = (singleRun) => Object.fromEntries(checkScenario({ id: 'x', facts: finFacts }, { singleRun }).facts.map((f) => [f.id, f.pass]));
+const withFin = (patch) => ({ ...finGood, finisher: { ...finGood.finisher, ...patch } });
+
+test('the finisher facts pass on a run the finisher ended after the person\'s go', () => {
+  assert.ok(Object.values(finVerdict(finGood)).every(Boolean), JSON.stringify(finVerdict(finGood)));
+  assert.equal(finVerdict({ ...finGood, finisher: { ...finGood.finisher, afterRun: { ...finGood.finisher.afterRun, ledger: [{ kind: 'go', by: 'phone' }] } } })['single-finisher-finished-after-go'], true, 'a go from the phone counts');
+});
+
+test('each finisher fact fails on its own defect', () => {
+  const before = finGood.finisher.beforeGo;
+  const after = finGood.finisher.afterRun;
+  assert.equal(finVerdict({ ...finGood, outcome: 'merged' })['single-finished'], false);
+  assert.equal(finVerdict({ ...finGood, outcome: 'ready' })['single-finished'], false);
+  assert.equal(finVerdict(withFin({ moved: null }))['single-finisher-waited-synced'], false);
+  assert.equal(finVerdict(withFin({ beforeGo: null }))['single-finisher-waited-synced'], false);
+  assert.equal(finVerdict(withFin({ beforeGo: { ...before, branchInBase: true } }))['single-finisher-waited-synced'], false, 'merged before the go');
+  assert.equal(finVerdict(withFin({ beforeGo: { ...before, syncMerges: [] } }))['single-finisher-waited-synced'], false, 'never synced');
+  assert.equal(finVerdict(withFin({ beforeGo: { ...before, finishedFile: true } }))['single-finisher-waited-synced'], false);
+  assert.equal(finVerdict(withFin({ beforeGo: { ...before, movedInBase: false } }))['single-finisher-waited-synced'], false);
+  assert.equal(finVerdict(withFin({ answeredTo: ['build-1', 'fin-1'] }))['single-go-left-to-person'], false, 'the answerer answered the finisher');
+  assert.equal(finVerdict(withFin({ sessionId: null }))['single-go-left-to-person'], false);
+  assert.equal(finVerdict(withFin({ answeredTo: undefined }))['single-go-left-to-person'], false, 'not recorded is not shown');
+  assert.equal(finVerdict(withFin({ afterRun: { ...after, ledger: [] } }))['single-finisher-finished-after-go'], false);
+  assert.equal(finVerdict(withFin({ afterRun: { ...after, ledger: [{ kind: 'go', by: 'agent' }] } }))['single-finisher-finished-after-go'], false);
+  assert.equal(finVerdict(withFin({ afterRun: { ...after, branchInBase: false } }))['single-finisher-finished-after-go'], false);
+  assert.equal(finVerdict(withFin({ afterRun: { ...after, finishedFile: false } }))['single-finisher-finished-after-go'], false);
+  assert.equal(finVerdict({ ...good })['single-finisher-waited-synced'], false, 'no finisher record');
+});
+
+test('finisherLink reads the latest finisher conversation\'s Remote Control link, and nothing without one', (t) => {
+  const dir = tmp('pir-fin-link-');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.equal(finisherLink(dir), null);
+  mkdirSync(join(dir, 'conversations'));
+  const note = (url, on = true) => JSON.stringify({ dir: 'note', kind: 'remote-control', on, url });
+  writeFileSync(join(dir, 'conversations', 'finisher-1.ndjson'), `${note('https://claude.ai/code/session_a')}\n`);
+  writeFileSync(join(dir, 'conversations', 'finisher-2.ndjson'), `${note(null, false)}\nnot json\n`);
+  writeFileSync(join(dir, 'conversations', 'build-1.ndjson'), `${note('https://claude.ai/code/session_b')}\n`);
+  assert.equal(finisherLink(dir), 'https://claude.ai/code/session_a', 'falls back past a log with the link off');
+  writeFileSync(join(dir, 'conversations', 'finisher-10.ndjson'), `${note('https://claude.ai/code/session_c')}\n`);
+  assert.equal(finisherLink(dir), 'https://claude.ai/code/session_c', 'by number, not by name');
 });

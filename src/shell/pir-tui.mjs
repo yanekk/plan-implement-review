@@ -82,6 +82,10 @@ function repoWidth(columns) {
 
 // The least SLUG keeps beside a single run's PROGRESS, enough for a short name or the start of a label.
 const SLUG_MIN = 12;
+// How much of a single run's PROGRESS cell a narrow frame keeps in view, and the least REPO gives way to
+// for it (listColumns).
+const PROGRESS_HEAD = 10;
+const REPO_NARROW = 9;
 // TYPE with a single run listed: `single` and the space before STATE.
 const TYPE_SINGLE = 7;
 
@@ -108,7 +112,12 @@ export function listColumns(rows, columns) {
     slug = SLUG_MIN;
     progress = Math.max(base.progress, Math.min(progress, rest - slug - REPO_MIN));
   }
-  const repo = Math.max(REPO_MIN, Math.min(REPO_MAX, rest - slug - progress));
+  let repo = Math.max(REPO_MIN, Math.min(REPO_MAX, rest - slug - progress));
+  // A frame too narrow for every column (60 wide beside `● ready for your go`, single-finisher T07): REPO
+  // gives way below its minimum, down to REPO_NARROW, so the PROGRESS header and its cell's head
+  // (`build ✓ re`) are drawn as they were beside `● ready to merge`, not cut mid-word.
+  const short = base.marker + TYPE_SINGLE + base.state + slug + repo + PROGRESS_HEAD - (columns | 0 || DEFAULT_COLS);
+  if (short > 0) repo = Math.max(REPO_NARROW, repo - short);
   return { ...base, type: TYPE_SINGLE, slug, progress, repo };
 }
 
@@ -165,6 +174,16 @@ function stateCell(state) {
     // The finisher waits for the person's go (finisher DESIGN §2.11), in place of `ready to merge`.
     case 'ready-for-your-go':
       return { text: '● ready for your go', style: 'your-go' };
+    // A single run's end (single-finisher DESIGN §2.11): the sync and the finisher at work are running, a
+    // red wait is red, and a run the finisher closed reads closed.
+    case 'syncing':
+      return { text: '● syncing', style: 'running' };
+    case 'finishing':
+      return { text: '● finishing', style: 'running' };
+    case 'not-ready':
+      return { text: '✗ not ready', style: 'crashed' };
+    case 'closed':
+      return { text: '◌ closed', style: 'ended' };
     case 'finished':
       return { text: '◌ finished', style: 'ended' };
     case 'crashed':
@@ -548,8 +567,10 @@ export function buildWatchFrame(view, { now, spinnerChar = SPINNER[0], ui = init
 
 // The step rows' glyphs and colours: a step is painted as a task row is (render.mjs's GLYPH and ROW_STYLE),
 // so a live step spins, an asking one is the amber-bold dot, a done one the green check (§2.11).
-const STEP_GLYPH = { asking: '●', done: '✔', failed: '✗', pending: '○' };
-const STEP_STYLE = { active: 'active', asking: 'asking', done: 'done', failed: 'red', pending: 'idle' };
+// `held` is a single run's sync that could not prepare its base (single-finisher DESIGN §2.11): amber, as
+// asking is, since it waits on the base rather than working.
+const STEP_GLYPH = { asking: '●', held: '●', done: '✔', failed: '✗', pending: '○' };
+const STEP_STYLE = { active: 'active', asking: 'asking', held: 'asking', done: 'done', failed: 'red', pending: 'idle' };
 
 // mm:ss, render.mjs's clock format; null reads blank.
 function fmtClock(ms) {
@@ -617,6 +638,17 @@ const STEP_TEXT_AT = 2 + 2 + 9 + 13;
 // The text column's width where the frame has room for it.
 const STEP_TEXT_WIDTH = 30;
 
+// fitWords(text, width) → text, or, when it is wider than `width`, its words that fit and `…`: a single
+// run's hand-merge line on a 60-column frame was cut mid-word by the terminal (`… git merge pir/r`), and the
+// person chose an ellipsis at a word (single-finisher T08, 2026-10-03). The whole line is on the Hand-off note.
+function fitWords(text, width) {
+  const chars = [...text];
+  if (width < 1 || chars.length <= width) return text;
+  const head = chars.slice(0, width - 1).join('');
+  const cut = head.lastIndexOf(' ');
+  return `${(cut > 0 ? head.slice(0, cut) : head).replace(/\s+$/, '')}…`;
+}
+
 // One step row of a planning or single run's steps view, tagged with its index for the mouse. On a frame
 // narrower than the full row the text column gives way, down to the text itself, so the clock is drawn
 // whole: the terminal cut `0:17` to `0:1` at 60 columns, which reads as another time (single-runs T11 drill).
@@ -624,8 +656,10 @@ function stepLine(r, i, { sel, alive, spinnerChar, cols = DEFAULT_COLS }) {
   const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
   const clock = fmtClock(r.clock);
   const room = cols - STEP_TEXT_AT - 1 - [...clock].length;
-  const width = Math.max([...r.text].length, Math.min(STEP_TEXT_WIDTH, room));
-  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(width)} ${clock}`.replace(/\s+$/, '');
+  // Only a row with no clock is shortened: a clocked row too narrow for its text keeps it whole (below).
+  const body = clock ? r.text : fitWords(r.text, cols - STEP_TEXT_AT);
+  const width = Math.max([...body].length, Math.min(STEP_TEXT_WIDTH, room));
+  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${body.padEnd(width)} ${clock}`.replace(/\s+$/, '');
   return withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i);
 }
 
@@ -1104,7 +1138,9 @@ export function loadDashboard({ dir = indexDir(), now = Date.now(), kill, exec, 
       const live = (snap?.runState?.steps ?? []).filter((st) => st.worker?.live).length;
       const key = `${record.repo}__${record.slug}`;
       const view = { key, slug: record.slug, state, repo: record.repo, progress: { done: 0, total: 0 }, workers: live, snap, record, controlDir: record.controlDir };
-      if (state === 'finished' && snap?.runState?.outcome === 'ready') view.merged = merged(view, { now });
+      // A run the finisher closed still shows its merge line until the person's merge lands (single-finisher
+      // DESIGN §2.10), so it is checked as a legacy `ready` run is.
+      if (state === 'finished' && (snap?.runState?.outcome === 'ready' || snap?.runState?.outcome === 'closed')) view.merged = merged(view, { now });
       return view;
     }
     const display = snap ? buildDisplay(snap.runState, { now }) : null;
@@ -1212,7 +1248,7 @@ export function followStep(ui, views, seenReviewId = null) {
 export function reliveWorker(ui, views) {
   const w = ui?.openWorker;
   if (ui?.view !== 'worker' || !w || w.live) return null;
-  const row = openTasks(views, ui).find((t) => t.id === w.taskId && t.worker?.id === w.workerId);
+  const row = openTasks(views, ui).find((t) => t.id === (w.stepId ?? w.taskId) && t.worker?.id === w.workerId);
   return row?.worker.live ? { ...ui, openWorker: { ...w, live: true } } : null;
 }
 
@@ -1564,7 +1600,7 @@ async function runTui({
     const moved = (next) => {
       ui = next;
       closeConv();
-      selectedTask.set(runKey(findOpen(dash.rows, ui)) ?? ui.openKey ?? ui.openSlug, ui.openWorker.taskId);
+      selectedTask.set(runKey(findOpen(dash.rows, ui)) ?? ui.openKey ?? ui.openSlug, ui.openWorker.stepId ?? ui.openWorker.taskId);
     };
     const landed = landStep(ui, dash.rows);
     if (landed !== ui) moved(landed);

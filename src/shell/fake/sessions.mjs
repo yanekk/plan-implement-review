@@ -218,6 +218,66 @@ export function singleReviewerScript({ name }) {
   ];
 }
 
+// ---- A single run's sync helpers and finisher (single-finisher T05, DESIGN §2.3, §2.7). ----
+
+export const SINGLE_RESOLVE_MATCH = 'Load the pir-single skill and run it as the resolve helper of pir/';
+export const SINGLE_FIX_MATCH = 'Load the pir-single skill and run it as the fix helper of pir/';
+// The single opening's first line (finisher-brief finisherOpening, T02).
+export const SINGLE_FINISHER_MATCH = 'You are the finisher of the single run';
+
+// singleResolveScript({ name, question }) → steps: finishes the merge in progress by keeping both sides of every
+// clash (the marker lines dropped), commits the merge and reports `resolved`. With `question` it first asks
+// the person that one AskUserQuestion (options SINGLE_RESOLVE_OPTIONS) and waits for the answer.
+export const SINGLE_RESOLVE_OPTIONS = ['Keep both', 'Keep main'];
+export function singleResolveScript({ name, question = null }) {
+  const ask = question
+    ? [
+        { emit: toolUse('toolu_resolve-ask-1', 'AskUserQuestion', { questions: [resolveQuestion(question)] }) },
+        { emit: canUseTool('resolve-ask-1', 'AskUserQuestion', { questions: [resolveQuestion(question)] }, { requires_user_interaction: true }) },
+        { await: 'control_response' },
+        { resultFor: 'resolve-ask-1' },
+      ]
+    : [];
+  return [
+    ...nextTurn(),
+    { emit: assistantText(`Resolving the clash on pir/${name}.`) },
+    ...ask,
+    { sh: run('resolve-both') },
+    singleReport('resolved', name, 'The merge is committed, both sides kept.'),
+    ...say('Resolved and committed.'),
+  ];
+}
+
+const resolveQuestion = (question) => ({
+  question,
+  header: 'Clash',
+  multiSelect: false,
+  options: [
+    { label: SINGLE_RESOLVE_OPTIONS[0], description: 'both sides\' lines, in order' },
+    { label: SINGLE_RESOLVE_OPTIONS[1], description: 'drop the change\'s side' },
+  ],
+});
+
+// singleFixScript({ name, fix }) → steps: runs the `sh` line `fix`, commits what it changed and reports
+// `fixed`.
+export function singleFixScript({ name, fix }) {
+  return [
+    ...nextTurn(),
+    { emit: assistantText(`Fixing the tests on pir/${name}.`) },
+    { sh: `${fix} && ${GIT} add -A && ${GIT} commit -q -m ${q('fix: make the tests pass after the sync')}` },
+    singleReport('fixed', name, 'The fix is committed.'),
+    ...say('Fixed and committed.'),
+  ];
+}
+
+// singleFinisherScript({ name, statusDir, repoRoot, finishingMs }) → the shared fake finisher on pir/{name}:
+// a `ready` status, the `Go` question, and on the go the merge into the main checkout for real, then `done`.
+// `statusDir` is the finisher's status folder under the run's renamed control folder.
+// `variant` is finisherScript's (`finisher-notyet`, `finisher-resync`, `finisher-exits`, …).
+export function singleFinisherScript({ name, statusDir, repoRoot, finishingMs = 100, variant = 'finisher' }) {
+  return finisherScript({ statusDir, repoRoot, branch: `pir/${name}`, finishingMs, merge: true, variant });
+}
+
 // ---- The coordinator drill (pir-coordinator T07). ----
 //
 // A reviewed three-task plan whose implementers each ask one thing before they build, and an agent that
@@ -495,6 +555,141 @@ export function fakePlanFiles(slug) {
   };
 }
 
+// ---- The fake finisher (finisher T07; single-finisher T05). ----
+//
+// The real finisher-agent session on the fake. The fake writes its own status files (a `sh` step, outside
+// the fence, which is the fake's and not what is tested) into `statusDir`, named in order, each written
+// aside and renamed so pir never reads half of one. The conversation rig's finisher scenarios and a single
+// run's tests share it: `branch` is what it merges, `init` the init event it starts its turns with.
+export const FINISHER_GO_QUESTION = 'Ready to finish? 2 steps from project rules';
+export const FINISHER_SUMMARY = 'The branch is clean and its tests pass; main has not moved.';
+export const FINISHER_RETRY_QUESTION = 'Retry the install? 1 step from project rules';
+export const FINISHER_RESERVED_COMMAND = 'rm -rf dist/';
+export const FINISHER_RECHECKED = 'Re-checked after main moved: the branch is clean and its tests pass.';
+export const FINISHER_NOT_YET = 'Not yet, then. Nothing has changed; tell me when you want me to ask again.';
+export const FINISHER_ASKING_AGAIN = 'Asking again.';
+export const finisherStuckSummary = (branch) => `Merged ${branch} into main; ./install.sh failed: npm ci exited 1 (network unreachable). Nothing else ran.`;
+export const finisherDoneSummary = (branch) => `Merged ${branch} into main and ran ./install.sh.`;
+export function finisherScript({ statusDir, repoRoot, branch, init = initEvent(), finishingMs = 3000, variant = 'finisher', merge: mergeForReal = false }) {
+  const writeStatus = (name, status) => {
+    const json = JSON.stringify(status).replace(/'/g, `'\\''`);
+    const dest = join(statusDir, name);
+    return { sh: `printf '%s' '${json}' > '${dest}.tmp' && mv '${dest}.tmp' '${dest}'` };
+  };
+  const steps = [`git -C ${repoRoot} merge ${branch}`, './install.sh'];
+  const say = (text) => [{ emit: assistantText(text) }];
+  // The go question (DESIGN §2.7): header and options exactly `Go` and `Not yet`.
+  const goQuestion = (id, question, n) => ({
+    tool: {
+      id,
+      name: 'AskUserQuestion',
+      input: { questions: [{ question, header: 'Go', multiSelect: false, options: [{ label: 'Go', description: `run the ${n} step${n === 1 ? '' : 's'}` }, { label: 'Not yet', description: 'change nothing' }] }] },
+    },
+  });
+  const bash = (id, command, description) => ({ tool: { id, name: 'Bash', input: { command, description } } });
+  const done = [
+    writeStatus('9-done.json', { kind: 'done', summary: finisherDoneSummary(branch) }),
+    ...say('Done: merged and installed.'),
+    { emit: resultEvent('success', 'finished') },
+    { chat: { workMs: 300, init: init } },
+  ];
+  const opening = [
+    { await: 'user' },
+    { emit: init },
+    ...say("I'm the pretend finisher. I looked at the branch and main without changing anything."),
+    writeStatus('1-ready.json', { kind: 'ready', rules: join(repoRoot, '.pir', 'rules', 'on-finish.md'), summary: FINISHER_SUMMARY, steps }),
+    ...say(`${FINISHER_SUMMARY}\n\nThe steps, once you say go:\n1. ${steps[0]}\n2. ${steps[1]}`),
+    goQuestion('go1', FINISHER_GO_QUESTION, 2),
+  ];
+  // What the finisher does once the go is in: the merge, then the variant's own end.
+  // With `merge` the fake also merges for real once the gate let its merge call through: the fake's own
+  // tool call only reads `ran Bash`, and a single run's test watches the base for the merge.
+  const realMerge = mergeForReal ? [{ sh: run('finisher-merge', statusDir, repoRoot, branch) }] : [];
+  const merge = [bash('merge1', steps[0], 'Merge the branch into main'), ...realMerge, ...say('Merged. Running the install.'), { sleep: finishingMs }];
+  if (variant === 'finisher') return [...opening, ...merge, ...done];
+  if (variant === 'finisher-notyet') {
+    // A `Not yet` is not a go (DESIGN §2.7): the finisher ends its turn and waits for the person to write.
+    return [
+      ...opening,
+      ...say(FINISHER_NOT_YET),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: init },
+      ...say(FINISHER_ASKING_AGAIN),
+      goQuestion('go2', FINISHER_GO_QUESTION, 2),
+      ...merge,
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-resync') {
+    // The base moves before the go (single-finisher DESIGN §2.5): the person's Go to the first question
+    // lands after pir held the finisher, so it does not count. pir then tells the finisher twice, in either
+    // order (the stale Go, and the re-sync), and only after both does it write a fresh `ready` and ask
+    // again. That second question is answered `Not yet`, the person writes, and a third question takes
+    // the go that finishes.
+    return [
+      ...opening,
+      ...say('Go noted; checking it counts.'),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: init },
+      ...say('Noted.'),
+      { emit: resultEvent('success', 'noted') },
+      { await: 'user' },
+      { emit: init },
+      ...say(FINISHER_RECHECKED),
+      writeStatus('2-ready.json', { kind: 'ready', rules: join(repoRoot, '.pir', 'rules', 'on-finish.md'), summary: FINISHER_RECHECKED, steps }),
+      goQuestion('go2', FINISHER_GO_QUESTION, 2),
+      ...say(FINISHER_NOT_YET),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: init },
+      ...say(FINISHER_ASKING_AGAIN),
+      goQuestion('go3', FINISHER_GO_QUESTION, 2),
+      ...merge,
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-exits') {
+    // A finisher that dies on every start, its resumes included (each resume continues past the exit before
+    // it), so the restart budget runs out and pir falls back to the hand merge (finisher DESIGN §2.12).
+    return [{ await: 'user' }, { emit: init }, ...say("I'm the pretend finisher, and I am about to fall over."), ...Array.from({ length: 8 }, () => ({ exit: 1 }))];
+  }
+  if (variant === 'finisher-stuck') {
+    // A step fails after the go (DESIGN §2.12): stuck with a proposal, the go question again, and only the
+    // second go runs the retry.
+    return [
+      ...opening,
+      bash('merge1', steps[0], 'Merge the branch into main'),
+      ...say('Merged. Running the install.'),
+      bash('install1', steps[1], 'Install the engine and skills'),
+      { sleep: finishingMs },
+      writeStatus('2-stuck.json', { kind: 'stuck', summary: finisherStuckSummary(branch), proposal: 'retry the install once the network is back', steps: [steps[1]] }),
+      ...say(`${finisherStuckSummary(branch)}\n\nI propose to retry the install. The step, once you say go:\n1. ${steps[1]}`),
+      goQuestion('go2', FINISHER_RETRY_QUESTION, 1),
+      bash('install2', steps[1], 'Install the engine and skills'),
+      ...say('Installed.'),
+      { sleep: finishingMs },
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-reserved') {
+    // A destructive command after the go is still the person's (DESIGN §2.5): parked, answered in the
+    // finisher's conversation.
+    return [
+      ...opening,
+      bash('merge1', steps[0], 'Merge the branch into main'),
+      ...say('Merged. The old build folder is in the way of the install; clearing it.'),
+      bash('clear1', FINISHER_RESERVED_COMMAND, 'Delete the old build folder'),
+      ...say('Cleared. Running the install.'),
+      { sleep: finishingMs },
+      ...done,
+    ];
+  }
+  throw new Error(`unknown finisher variant "${variant}"`);
+}
+
+
 // ---- As a program: the work the `sh` steps do. ----
 
 function git(...args) {
@@ -537,9 +732,27 @@ function cli([cmd, ...args]) {
   } else if (cmd === 'report') {
     dropReport(args[0], args[1], args[2]);
   } else if (cmd === 'single-report') {
-    // The folder is cut out of the opening up to `. Starting point:`, which follows it on the same line.
-    const dir = /Reports folder: (.+?)\. Starting point: /.exec(process.env.FAKE_OPENING ?? '')?.[1];
+    // The folder is cut out of the opening up to `. Starting point:` (builder, reviewer) or `. Base:` (a sync
+    // helper), which follows it on the same line.
+    const dir = /Reports folder: (.+?)\. (?:Starting point|Base): /.exec(process.env.FAKE_OPENING ?? '')?.[1];
     dropReport(dir, 'single', `[pir:v1 kind=${args[0]} single=${args[1]}]\n${args[2] ?? args[0]}`);
+  } else if (cmd === 'resolve-both') {
+    // Every unmerged file keeps both sides: the conflict marker lines go, the rest stays in order.
+    const files = git('diff', '--name-only', '--diff-filter=U').split('\n').filter(Boolean);
+    if (!files.length) throw new Error('no merge in progress to resolve');
+    for (const f of files) {
+      const kept = readFileSync(f, 'utf8').split('\n').filter((l) => !/^(<<<<<<<|=======|>>>>>>>)( |$)/.test(l));
+      writeFileSync(f, kept.join('\n'));
+    }
+    execFileSync('git', ['-c', 'user.name=pir fake', '-c', 'user.email=fake@pir.invalid', 'add', '-A']);
+    execFileSync('git', ['-c', 'user.name=pir fake', '-c', 'user.email=fake@pir.invalid', 'commit', '-q', '--no-edit']);
+  } else if (cmd === 'finisher-merge') {
+    // The merge a finisher's Bash call would have run, done only once pir's gate holds the phase at
+    // `finishing` (the go was given): the fake's tool call itself runs nothing.
+    const [statusDir, repoRoot, branch] = args;
+    const phase = JSON.parse(readFileSync(join(statusDir, '..', 'state.json'), 'utf8')).phase;
+    if (phase !== 'finishing') throw new Error(`finisher-merge: the phase is ${phase}, not finishing`);
+    execFileSync('git', ['-C', repoRoot, '-c', 'user.name=pir fake', '-c', 'user.email=fake@pir.invalid', 'merge', '-q', '--no-edit', branch]);
   } else if (cmd === 'mark') {
     const { slug, task } = branchParts();
     setRowState(`plans/${slug}/PROGRESS.md`, task, args[0]);

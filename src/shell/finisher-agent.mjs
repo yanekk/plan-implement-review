@@ -55,6 +55,8 @@ function answersFromResult(text) {
 // `rules` is chooseRules' { path, source }. `pirHome` (default ~/.pir) and `skillsDir`/`engineDir` are
 // read roots before the go (DESIGN §2.4); all are injectable for tests, as are `uuid` and `now`. `base` is
 // the run's recorded base branch, passed on every start: the finisher is told it as its target branch.
+// `kind` 'single' with `promptPath` is a single run's finisher (single-finisher DESIGN §2.7); `reportPath`
+// is then null and never rendered.
 export function startFinisher({
   controlDir,
   featurePath,
@@ -63,7 +65,9 @@ export function startFinisher({
   mainCheckout = repoRoot,
   base,
   rules,
-  reportPath,
+  kind = 'build',
+  reportPath = null,
+  promptPath = null,
   askRules = [],
   platform = null,
   startWorker,
@@ -88,7 +92,11 @@ export function startFinisher({
   // passed; the resumed brief tells the finisher what to write now.
   for (const f of readdirSync(statusDir)) drop(join(statusDir, f));
 
-  const name = `${basename(repoRoot)} / ${slug} / finisher`;
+  // A single run's finisher carries `single` in its name, matching the run's other sessions and with no
+  // `T{nn}`, so no coordinator counts it (single-finisher DESIGN §2.7). Nothing else below reads kind.
+  const name = kind === 'single'
+    ? `${basename(repoRoot)} / ${slug} / single / finisher`
+    : `${basename(repoRoot)} / ${slug} / finisher`;
   const fileGate = gateFor({
     cwd: featurePath,
     readRoots: [repoRoot, join(repoRoot, '.claude', 'worktrees'), featurePath, mainCheckout, skillsDir, pirHome, engineDir],
@@ -193,6 +201,10 @@ export function startFinisher({
     up = true;
     const w = worker;
     w.onExit((info) => onExit(w, info));
+    // A resumed finisher appends to the log it exited in, so the log says it is back, as a held session's
+    // does (held-session.mjs): without it the conversation view reads the old `exited` note as the end and
+    // opens the live finisher read only, its go question unanswerable (single-finisher T08 drill).
+    if (resume) w.note('resumed', { sessionId: session.sessionId });
     if (resume) {
       const r = pendingResume ?? { phase: state.phase, stuckSummary: null };
       pendingResume = null;
@@ -200,8 +212,8 @@ export function startFinisher({
     } else {
       w.send(
         finisherOpening({
-          slug, branch: `pir/${slug}`, base, rulesPath: state.rules, rulesSource: state.rulesSource,
-          statusDir, reportPath, mainCheckout,
+          kind, slug, branch: `pir/${slug}`, base, rulesPath: state.rules, rulesSource: state.rulesSource,
+          statusDir, reportPath, promptPath, mainCheckout,
         }),
         { from: 'pir' },
       );

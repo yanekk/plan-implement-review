@@ -8,6 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SINGLE_ID_RE } from '../core/singleflow.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
+import { FINISHER_GO_QUESTION } from './fake/sessions.mjs';
 import { SINGLE_HINT } from './list-view.mjs';
 import { SINGLE_RIG_NAME, SINGLE_RIG_QUESTION } from './plan-rig.mjs';
 import { git, SIZES, ENTER, LEFT, TAB, esc, until, typeSettled, lastLine, rigWithTeardown, headOf, showsPopup, boxText, clearBox, SPAWNED_MS } from './plan-rig-helpers.mjs';
@@ -48,11 +49,18 @@ for (const [cols, rows] of SIZES) {
       assert.equal(followed[0], 'the builder finished; the reviewer has started');
       assert.match(followed[1], /^review {2}worker \S+/, followed.join('\n'));
       await screen.waitFor(new RegExp(`pir/${SINGLE_RIG_NAME} is reviewed\\.`), 60000);
+
+      // ← the run's steps: the finisher waits for the go; `c` opens it, and the person's Go ends the run.
+      screen.send(LEFT);
+      await screen.waitFor(/● merge +— +◆ finisher {2}waiting for your go$/m, 60000);
+      screen.send('c');
+      await screen.waitFor(new RegExp(esc(FINISHER_GO_QUESTION)), 60000);
+      screen.send(ENTER);
       await until(() => recordsOf(rig).find((r) => r.slug === SINGLE_RIG_NAME && r.finalState === 'finished'), 'the run finished', 60000);
 
       // ← the run, ← the list: the box was reset to `@` when the run started.
       screen.send(LEFT);
-      await screen.waitFor((s) => !/the builder finished/.test(s));
+      await screen.waitFor((s) => /pick a step/.test(s));
       screen.send(LEFT);
       const list = await screen.waitFor(/new {2}start with @repo/);
       assert.equal(boxText(list), '@');

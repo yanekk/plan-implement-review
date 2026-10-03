@@ -14,6 +14,7 @@ import { startWorker as realStartWorker } from './worker-proc.mjs';
 import { startFinisher, FINISHER_TOOLS, FINISHER_HOOKS, ASK_EVERY_CALL } from './finisher-agent.mjs';
 import { fakeClaudeSpawner, toolUse, toolResult, canUseTool } from './fake/claude-stream.mjs';
 import { RESTARTED_MID_FINISH } from '../core/finisher-policy.mjs';
+import { hasEnded } from './conversation-view.mjs';
 
 const CLAUDE = '/nonexistent/claude';
 
@@ -177,6 +178,49 @@ test('fence: Write only into the status folder and the pir-finisher skill while 
   await waitFor(() => gateNotes(fin).length === 7, 'seven verdicts');
   const v = Object.fromEntries(gateNotes(fin).map((n) => [n.requestId, n.verdict]));
   assert.deepEqual(v, { w1: 'allow', w2: 'deny', s1: 'allow', s2: 'deny', r1: 'allow', r2: 'deny', b1: 'allow' });
+});
+
+// ---- A single run's finisher (single-finisher DESIGN §2.7) ----
+
+// A single run's control folder is plans/{name}/.parallel/single/, so its status folder sits under it.
+function singleOpts(s) {
+  const controlDir = join(s.repoRoot, 'plans', 'demo', '.parallel', 'single');
+  mkdirSync(controlDir, { recursive: true });
+  return { kind: 'single', controlDir, reportPath: null, promptPath: join(controlDir, 'prompt.md') };
+}
+
+test('single: starts with the single opening and the single session name; no Report line', async (t) => {
+  const s = scratch(t);
+  const opts = singleOpts(s);
+  const { fin, calls } = start(s, [{ await: 'user' }], t, opts);
+  assert.equal(calls[0].name, 'repo / demo / single / finisher');
+  assert.equal(calls[0].hooks, FINISHER_HOOKS, 'the same fence as a build');
+  assert.deepEqual(calls[0].tools, FINISHER_TOOLS);
+  const text = told(fin)[0];
+  assert.match(text, /^Invoke the pir-finisher skill and follow it\. You are the finisher of the single run `demo`/);
+  assert.ok(text.includes(`Change asked for: ${opts.promptPath}`));
+  assert.ok(text.includes(`Status folder: ${join(opts.controlDir, 'finisher', 'status')}`));
+  assert.doesNotMatch(text, /^Report:/m);
+  assert.doesNotMatch(text, /^Plan:/m);
+  assert.doesNotMatch(text, /null/);
+  assert.equal(fin.logPath, join(opts.controlDir, 'conversations', 'finisher-1.ndjson'));
+});
+
+test('single: in preparing a git merge is refused and a git log allowed, exactly as for a build', async (t) => {
+  for (const kind of ['build', 'single']) {
+    const s = scratch(t);
+    const opts = kind === 'single' ? singleOpts(s) : {};
+    const { fin } = start(s, [
+      { await: 'user' },
+      { tool: { id: 'm1', name: 'Bash', input: { command: 'git merge pir/demo' }, allowRuled: true } },
+      { tool: { id: 'l1', name: 'Bash', input: { command: 'git log --oneline dev..pir/demo' } } },
+      { await: 'user' },
+    ], t, opts);
+    await waitFor(() => gateNotes(fin).length === 2, `${kind}: two verdicts`);
+    const v = Object.fromEntries(gateNotes(fin).map((n) => [n.requestId, n.verdict]));
+    assert.deepEqual(v, { m1: 'deny', l1: 'allow' }, kind);
+    assert.equal(fin.phase(), 'preparing', kind);
+  }
 });
 
 // ---- Status files (DESIGN §2.6) ----
@@ -377,6 +421,10 @@ test('exit in finishing → resumed with its session id, phase stuck, the resume
   const r = fin.ledger().find((l) => l.kind === 'restart');
   assert.deepEqual([r.from, r.to], ['finishing', 'stuck']);
   assert.equal(fin.logPath, join(s.controlDir, 'conversations', 'finisher-1.ndjson'), 'the same conversation, appended');
+  // The log says the finisher is back, so the conversation view does not read the old exit as its end.
+  const entries = readFileSync(fin.logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(entries.some((e) => e.dir === 'note' && e.kind === 'exited'), 'the first process exited');
+  assert.equal(hasEnded(entries), false, 'a resumed finisher is not ended');
 });
 
 test('four exits within an hour → given up; a pir restart within the hour keeps it given up', async (t) => {

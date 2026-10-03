@@ -57,6 +57,7 @@ import { chooseRules } from '../core/finisher-policy.mjs';
 import { startWorker } from './worker-proc.mjs';
 import { alertText, endAlert, holdAlert, notifyStep, notifyExit, newNotifyState, finisherAlert, finisherNotifyView } from '../core/notify.mjs';
 import { holdText } from '../core/basebranch.mjs';
+import { baseWatchVerdict, watchDue } from '../core/basewatch.mjs';
 import { publish as ntfyPublish, clear as ntfyClear } from './ntfy.mjs';
 import { readNotifyConfig, notifyIcon, workerEnv } from './notify-config.mjs';
 
@@ -954,22 +955,19 @@ export function startCoordinator({
   function watchBase() {
     const t = now();
     let watched = null;
-    if (handoff.watchFrom == null) handoff.watchFrom = t;
-    if (t - handoff.watchFrom >= watchMs) {
-      handoff.watchFrom = t;
+    const due = watchDue({ now: t, watchFrom: handoff.watchFrom, watchMs });
+    handoff.watchFrom = due.watchFrom;
+    if (due.due) {
       watched = prepareRunBase('watch');
       if (watched.remote) handoff.remote = watched.remote;
       if (!watched.ok && watched.reason === 'fetch-failed') handoff.lastWatchFailure = t;
       else handoff.lastWatch = t;
     }
     const refs = [RUN_BASE_REF, trackingRef()].filter(Boolean);
-    if (worktree.baseContains(state.feature.branch, { refs })) return 'merged';
-    // Moved: the local base is not where the last sync left it, or the remote's newer copy is not what was
-    // merged. Compared with the local tip at the sync, not the merged commit, since that may be the
-    // remote's copy while the local branch stays behind it (a checked-out base with changes, §2.3).
-    const localMoved = worktree.baseTip({ ref: RUN_BASE_REF }) !== handoff.localSeen;
-    const remoteMoved = !!watched?.ok && watched.sha !== handoff.baseSha;
-    return localMoved || remoteMoved ? 'moved' : null;
+    const containsTip = worktree.baseContains(state.feature.branch, { refs });
+    // Read only when not merged, as before: the verdict ignores it then.
+    const localTip = containsTip ? null : worktree.baseTip({ ref: RUN_BASE_REF });
+    return baseWatchVerdict({ containsTip, localTip, localSeen: handoff.localSeen, watched, baseSha: handoff.baseSha });
   }
 
   // The wait for the person's merge: the base holding the tip ends the run, the base moving without it

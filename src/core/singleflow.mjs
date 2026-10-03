@@ -2,7 +2,8 @@
 //
 // A single run makes one small change without a plan: pir runs the project's setup, holds a builder
 // session that commits the change, runs the tests itself, renames the run to the builder's name, holds a
-// fresh reviewer, runs the tests again and ends `ready`. This module decides every step of that from the
+// fresh reviewer, runs the tests again, then brings the base in and hands the branch to the finisher
+// (single-finisher DESIGN §2.2–§2.10). This module decides every step of that from the
 // saved state (`state.json`) and what the shell just observed, and returns the effects as a list of
 // actions for the shell (src/shell/single-run.mjs) to execute in order. It reads no clock, no file and
 // no process (boundary.test.mjs), so a whole run, red rounds and baseline included, is a millisecond test.
@@ -20,7 +21,8 @@
 //   { type: 'runBaseline' }                      the same at the starting commit, in a throwaway worktree
 //   { type: 'closeWhenIdle' }                    close the live session at the idle gate
 //   { type: 'rename', substep }                  one of RENAME_SUBSTEPS, in order
-//   { type: 'finish', outcome }                  the run ends 'ready' | 'dropped'. A command still in
+//   { type: 'finish', outcome }                  the run ends 'finished' | 'merged' | 'closed' | 'dropped'
+//                                                (a legacy state may carry 'ready'). A command still in
 //                                                flight (a `dropped` during a test run) is the shell's to kill.
 //   { type: 'exitCrashed' }                      exit with no final status, so the run shows crashed
 //
@@ -35,13 +37,39 @@ export const SINGLE_ID_RE = /^single-[0-9a-f]{4}$/;
 // How many red rounds a step gets before the session is told to stop and ask the person (§2.5).
 export const RED_LIMIT = 3;
 
-// The report kinds each step acts on (§2.7). A kind belonging to the other step is ignored.
+// The report kinds each step acts on (§2.7). A kind belonging to another step is ignored. In `sync`
+// only the live helper's own kind counts (`resolved` while resolving, `fixed` while fixing); a helper may
+// not drop the run (single-finisher DESIGN §2.3), and `wait` holds no session that reports.
 const STEP_KINDS = {
   build: ['built', 'dropped'],
   review: ['reviewed', 'dropped'],
+  sync: ['resolved', 'fixed'],
+  wait: [],
 };
 
-const ROLES = { build: 'builder', review: 'reviewer' };
+const ROLES = { build: 'builder', review: 'reviewer', resolve: 'resolve', fix: 'fix' };
+
+// How long a held sync waits before it tries to prepare the base again (single-finisher DESIGN §2.2
+// step 1), as holdSync's retryMs does for builds.
+export const SYNC_RETRY_MS = 60_000;
+
+// The end-of-run part of the state (single-finisher T03 Interface). Every field defaulted, so a
+// state.json written before the sync existed loads.
+function initialEnd() {
+  return {
+    seq: 0,
+    phase: null,
+    sync: null,
+    tests: null,
+    testsReason: null,
+    fixUsed: false,
+    hold: null,
+    localSeen: null,
+    remote: null,
+    finisher: null,
+    fallback: null,
+  };
+}
 
 // singleIdFrom(hex4) → 'single-' + hex4. The hex comes from the shell (the core draws no random
 // number); anything else is a caller bug and throws.
@@ -58,11 +86,14 @@ export function isValidSingleName(name) {
   return isValidSlug(name) && !SINGLE_ID_RE.test(name);
 }
 
-// singleSessionName({ repo, run, step }) → '{repo} / {run} / single / builder|reviewer' (§2.6). `run` is
-// the run id before the rename and the name after. No T{nn} segment, so no coordinator counts it.
+// singleSessionName({ repo, run, step }) → '{repo} / {run} / single / builder|reviewer|resolve|fix' (§2.6,
+// single-finisher §2.3). `run` is the run id before the rename and the name after. No T{nn} segment, so
+// no coordinator counts it.
 export function singleSessionName({ repo, run, step }) {
-  const role = ROLES[step];
-  if (!role) throw new Error(`singleSessionName: step must be 'build' or 'review', got ${JSON.stringify(step)}`);
+  const role = Object.hasOwn(ROLES, step) ? ROLES[step] : null;
+  if (!role) {
+    throw new Error(`singleSessionName: step must be 'build', 'review', 'resolve' or 'fix', got ${JSON.stringify(step)}`);
+  }
   return `${repo} / ${run} / single / ${role}`;
 }
 
@@ -87,12 +118,41 @@ export function reviewerInstruction({ reportsDir, name, base, baseSha, prompt })
   );
 }
 
+// helperInstruction(...) → the opening instruction of a sync helper (single-finisher DESIGN §2.3). Its
+// own wording rather than buildConflictPrompt's, which names the pir-worker contract and plan-build
+// reports a held single-run session does not follow. The files go one per line so a session can copy
+// them; a missing reason or log drops its line.
+export function helperInstruction({ role, name, base, reportsDir, files = [], testsReason = null, logPath = null }) {
+  if (role !== 'resolve' && role !== 'fix') {
+    throw new Error(`helperInstruction: role must be 'resolve' or 'fix', got ${JSON.stringify(role)}`);
+  }
+  const head =
+    `Load the pir-single skill and run it as the ${role} helper of pir/${name}. You are run by \`pir single\`. ` +
+    `Reports folder: ${reportsDir}. Base: ${base}.`;
+  if (role === 'resolve') {
+    return [
+      head,
+      `pir merged ${base} into pir/${name} and the merge stopped on a clash in:`,
+      ...files.map((f) => `  ${f}`),
+      `Finish the merge in progress: resolve these files keeping the intent of both sides, commit the merge, ` +
+        `and report \`resolved\`.`,
+    ].join('\n');
+  }
+  const lines = [head, `pir merged ${base} into pir/${name} and the tests failed${testsReason ? `: ${testsReason}` : ''}.`];
+  if (logPath) lines.push(`Log: ${logPath}`);
+  lines.push(
+    `Make the tests pass without undoing the change or the merged ${base}, commit, and report \`fixed\`. ` +
+      'If nothing can be fixed, report `fixed` and say why.',
+  );
+  return lines.join('\n');
+}
+
 // The report header of §2.7. Only the header form counts, and only on the first line: a session has
 // no reason to write `kind=` in prose, so a body without the header is null rather than a guess.
-const REPORT_HEADER = /^\[pir:v1 kind=(built|reviewed|dropped) single=(\S+)\]$/;
+const REPORT_HEADER = /^\[pir:v1 kind=(built|reviewed|dropped|resolved|fixed) single=(\S+)\]$/;
 
 // parseSingleReport(text) → { kind, name, body } | null. `single=-` reads as name null and is allowed
-// only for `dropped`: a `built` or `reviewed` claim with no name names nothing to check.
+// only for `dropped`: any other claim with no name names nothing to check.
 export function parseSingleReport(text) {
   if (typeof text !== 'string') return null;
   const nl = text.indexOf('\n');
@@ -157,7 +217,8 @@ export function leftoverMessage({ sha, dirty }) {
 //   pending  { kind, name } of a report whose checks the shell has been asked to run
 //   red      the red test run whose message waits for the baseline (§2.5)
 // The §3.5 fields the decision owns:
-//   step      'setup' | 'build' | 'rename' | 'review'
+//   step      'setup' | 'build' | 'rename' | 'review' | 'sync' | 'wait'
+//   end       the end sequence after the review (single-finisher T03 Interface; initialEnd)
 //   live      a session for the current step is open in this program
 //   accepted  { kind, name, head } of a report whose checks passed (`head` is the branch head then), or
 //             { kind: 'dropped', name, body } — kept after the finish so the screen can quote the body
@@ -173,7 +234,7 @@ export function initialSingleState({ id, base, baseSha, commands }) {
     id,
     name: null,
     step: 'setup',
-    sessions: { build: [], review: [] },
+    sessions: { build: [], review: [], resolve: [], fix: [] },
     commands: { setup: [...(commands?.setup ?? [])], test: [...(commands?.test ?? [])] },
     base,
     baseSha,
@@ -188,13 +249,21 @@ export function initialSingleState({ id, base, baseSha, commands }) {
     running: null,
     pending: null,
     red: null,
+    end: initialEnd(),
   };
 }
 
 function clone(state) {
+  const end = { ...initialEnd(), ...(state.end ?? {}) };
+  if (end.sync) end.sync = { ...end.sync, files: [...(end.sync.files ?? [])] };
+  if (end.testsReason) end.testsReason = { ...end.testsReason };
+  if (end.hold) end.hold = { ...end.hold };
+  const sessions = {};
+  for (const k of ['build', 'review', 'resolve', 'fix']) sessions[k] = [...(state.sessions?.[k] ?? [])];
   return {
     ...state,
-    sessions: { build: [...(state.sessions?.build ?? [])], review: [...(state.sessions?.review ?? [])] },
+    sessions,
+    end,
     commands: { setup: [...(state.commands?.setup ?? [])], test: [...(state.commands?.test ?? [])] },
     rounds: { build: 0, review: 0, ...(state.rounds ?? {}) },
     renamed: { branch: false, worktree: false, control: false, index: false, ...(state.renamed ?? {}) },
@@ -233,6 +302,17 @@ function rejectionText(report, failures) {
 //                for a command run that finished; head, clean and dirty (the `git status --porcelain`
 //                listing) are the worktree's at the end of a test run
 //   renamed:     { branch, worktree, control, index } — the rename sub-steps already done on disk
+//   — the end sequence (single-finisher DESIGN §2.2–§2.10, T03 Interface) —
+//   base:        prepareBase's result { ok, sha, remote, localTip, reason, text } for the last
+//                `prepareBase` action
+//   sync:        syncBase's result { state: 'up-to-date'|'merged'|'conflict'|'error', baseSha, files, error }
+//   syncPending: a merge is in progress in the worktree
+//   watch:       'merged' | 'moved' | null — baseWatchVerdict, computed by the shell; at the sync's
+//                prepare it is 'merged' when the local base or the commit just prepared holds the tip
+//   finisher:    { started, phase, goGiven, givenUp, failed, accepted: [{ kind }] } — the finisher this
+//                program holds; `started` false (or no fact) when it holds none; `phase` may be read off
+//                the finisher's state.json on a resume before it is started
+//   now:         ms, for the hold's retry only
 // }
 //
 // A step's session is closed only once it is idle (or gone): that is the idle gate, and it is what stops
@@ -284,6 +364,11 @@ export function decideSingleStep(state, facts = {}) {
     s.tested = { head, ok: null };
     actions.push({ type: 'runTests', head });
   };
+
+  if (s.step === 'sync' || s.step === 'wait') {
+    endStep(s, facts, actions, finish);
+    return { state: s, actions };
+  }
 
   if (facts.resume) {
     // Whatever this program held before it stopped is gone: the session, the command it was running,
@@ -465,7 +550,12 @@ export function decideSingleStep(state, facts = {}) {
           s.step = 'review';
           open('review');
         } else {
-          finish('ready');
+          // The green review starts the end sequence; the run no longer ends `ready` (single-finisher §2.2).
+          s.accepted = null;
+          s.rejected = null;
+          s.step = 'sync';
+          s.end = { ...s.end, seq: s.end.seq + 1, tests: 'green', testsReason: null, fixUsed: false, sync: null, hold: null };
+          startPrepare(s, actions);
         }
       }
       return { state: s, actions };
@@ -484,12 +574,307 @@ export function decideSingleStep(state, facts = {}) {
   return { state: s, actions };
 }
 
-// singleProgress(runState) → the dashboard's PROGRESS cell (§2.8). `runState` is the snapshot's
-// { step, phase: 'working'|'testing', outcome, rounds }. A red round shows after the step's `tests`.
+const CLOSED_CELL = 'build ✓ review ✓ sync ✓ merge ✗';
+
+// --- the end sequence (single-finisher DESIGN §2.2–§2.10) -------------------------------------------
+
+function startPrepare(s, actions) {
+  s.end.phase = 'prepare';
+  actions.push({ type: 'prepareBase', mode: 'start' });
+}
+
+// endStep(s, facts, actions, finish) → mutates the cloned state `s` and appends to `actions`: one pass of
+// the `sync` or `wait` step. It mirrors the build's end sequence in coordinate.mjs (endSync, endSyncing,
+// endTests, startFix, endFixing, handOver, finisherWaiting, resync), as decisions rather than effects.
+function endStep(s, facts, actions, baseFinish) {
+  const e = s.end;
+  const fin = facts.finisher ?? null;
+  const now = facts.now ?? 0;
+  const done = facts.commandDone ?? null;
+
+  // Every end of the run closes a finisher this program holds first, as the build's finish() does.
+  const finish = (outcome) => {
+    if (e.finisher === 'on' && fin?.started) actions.push({ type: 'closeFinisher' });
+    baseFinish(outcome);
+  };
+
+  const fallBack = (why, { close = true } = {}) => {
+    if (close) actions.push({ type: 'closeFinisher' });
+    e.finisher = 'fallback';
+    e.fallback = why;
+  };
+
+  const startFinisher = ({ resumed }) => {
+    actions.push({ type: 'startFinisher' });
+    e.finisher = 'on';
+    // A start that follows a sync which moved the branch voids the finisher's old steps (handOver).
+    if (resumed && (e.sync?.state === 'merged' || e.sync?.state === 'resolved')) {
+      actions.push({ type: 'finisherResynced', baseSha: e.sync.baseSha ?? null });
+    }
+  };
+
+  const runTests = () => {
+    e.phase = 'testing';
+    s.running = 'tests';
+    actions.push({ type: 'runTests', head: null });
+  };
+
+  const openHelper = (helper, { reopen = false } = {}) => {
+    const last = s.sessions[helper].at(-1);
+    if (reopen && last) actions.push({ type: 'resumeSession', step: helper, sessionId: last });
+    else actions.push({ type: 'spawn', step: helper });
+    s.live = true;
+    e.phase = helper === 'resolve' ? 'resolving' : 'fixing';
+  };
+
+  // The sequence has settled: the wait, and the hand-over or the fallback (§2.4, §2.5 step 1, §2.6).
+  const settle = (tests) => {
+    s.step = 'wait';
+    s.running = null;
+    s.pending = null;
+    s.accepted = null;
+    s.rejected = null;
+    e.phase = null;
+    e.tests = tests;
+    if (tests === 'green') {
+      if (e.finisher === null) startFinisher({ resumed: false });
+      else if (e.finisher === 'on') {
+        // A re-sync settled green: the finisher re-checks. A finisher this program does not hold (the
+        // run was resumed mid re-sync) is started first, and then told.
+        if (fin?.started) actions.push({ type: 'finisherResynced', baseSha: e.sync?.baseSha ?? null });
+        else {
+          actions.push({ type: 'startFinisher' });
+          actions.push({ type: 'finisherResynced', baseSha: e.sync?.baseSha ?? null });
+        }
+      }
+    } else if (e.finisher === 'on') {
+      // Red under the finisher: closed for good; never handed over again in this run (§2.5 step 1). A
+      // finisher this program does not hold (resumed mid re-sync) has nothing to close.
+      fallBack('red', { close: fin?.started === true });
+    }
+  };
+
+  // A new sync sequence: the base moved (§2.5 step 5, §2.6). It gets its own fix helper.
+  const resync = () => {
+    if (e.finisher === 'on') actions.push({ type: 'finisherResyncing' });
+    s.step = 'sync';
+    e.seq += 1;
+    e.fixUsed = false;
+    e.sync = null;
+    e.hold = null;
+    startPrepare(s, actions);
+  };
+
+  if (facts.resume) {
+    s.live = false;
+    s.pending = null;
+    s.rejected = null;
+    s.accepted = null;
+    s.running = null;
+    if (s.step === 'wait') {
+      if (e.finisher === 'on') {
+        if (fin?.phase === 'done') {
+          finish('finished');
+          return;
+        }
+        startFinisher({ resumed: true });
+        return;
+      }
+      // A red or fallback wait: the watch below carries on.
+    } else {
+      const helper = e.phase === 'resolving' ? 'resolve' : e.phase === 'fixing' ? 'fix' : null;
+      if (helper && s.sessions[helper].at(-1)) {
+        openHelper(helper, { reopen: true });
+        return;
+      }
+      if (e.phase === 'testing') {
+        runTests();
+        return;
+      }
+      if (e.phase === 'fixing') {
+        openHelper('fix');
+        return;
+      }
+      // Anything else starts the sequence again from the base. A merge left in progress is abandoned
+      // first. A merge that may have landed unseen is not vouched for by the last green: tests rerun.
+      if (facts.syncPending) actions.push({ type: 'abortSync' });
+      if (e.phase === 'merge' || e.phase === 'resolving') {
+        e.tests = null;
+        e.testsReason = null;
+      }
+      e.hold = null;
+      startPrepare(s, actions);
+      return;
+    }
+  }
+
+  // --- wait ---------------------------------------------------------------------------------------
+  if (s.step === 'wait') {
+    if (e.finisher === 'on') {
+      if (fin?.failed) {
+        fallBack('failed', { close: false });
+        return;
+      }
+      if (fin?.givenUp) {
+        fallBack('gave-up');
+        return;
+      }
+      for (const st of fin?.accepted ?? []) {
+        if (st?.kind === 'done') return finish('finished');
+        if (st?.kind === 'close') return finish('closed');
+      }
+      if (fin?.phase === 'done') return finish('finished');
+      // After any go the finisher's own merge moves the base; only done or close end the run (§2.5 step 4).
+      if (fin?.goGiven) return;
+    }
+    if (facts.watch === 'merged') finish('merged');
+    else if (facts.watch === 'moved') resync();
+    return;
+  }
+
+  // --- sync ---------------------------------------------------------------------------------------
+  const helper = e.phase === 'resolving' ? 'resolve' : e.phase === 'fixing' ? 'fix' : null;
+  const wasLive = s.live;
+  if (helper && facts.sessionId && s.live && s.sessions[helper].at(-1) !== facts.sessionId) {
+    s.sessions[helper].push(facts.sessionId);
+  }
+  const gone = wasLive && (facts.exited === true || facts.live === false);
+  if (gone) s.live = false;
+
+  if (e.phase === 'prepare') {
+    // The person merged by hand: nothing is left to sync (§2.2 step 2).
+    if (facts.watch === 'merged') return finish('merged');
+    const b = facts.base;
+    if (!b) {
+      if (e.hold && now >= e.hold.nextTry) actions.push({ type: 'prepareBase', mode: 'start' });
+      return;
+    }
+    if (b.remote) e.remote = b.remote;
+    if (!b.ok) {
+      // Never merge a base this sync did not just try to fetch: hold, retry (§2.2 step 1, holdSync).
+      const same = e.hold?.reason === b.reason;
+      e.hold = { reason: b.reason ?? null, text: b.text ?? null, since: same ? e.hold.since : now, nextTry: now + SYNC_RETRY_MS };
+      return;
+    }
+    e.hold = null;
+    e.localSeen = b.localTip ?? null;
+    e.phase = 'merge';
+    actions.push({ type: 'syncBase', baseSha: b.sha });
+    return;
+  }
+
+  if (e.phase === 'merge') {
+    const r = facts.sync;
+    if (!r) return;
+    const files = [...(r.files ?? [])];
+    if (r.state === 'error') {
+      // git refused before merging: nothing to resolve, the branch is not ready (§2.2 step 3).
+      e.sync = { state: 'unresolved', baseSha: r.baseSha ?? null, files };
+      e.testsReason = null;
+      settle('red');
+      return;
+    }
+    e.sync = { state: r.state, baseSha: r.baseSha ?? null, files };
+    if (r.state === 'up-to-date') {
+      // The tested head stands, green or red. A head nobody has tested since a resume is tested now.
+      if (e.tests === null) runTests();
+      else settle(e.tests);
+    } else if (r.state === 'merged') {
+      runTests();
+    } else if (r.state === 'conflict') {
+      openHelper('resolve');
+    }
+    return;
+  }
+
+  if (e.phase === 'testing') {
+    if (!(done && done.kind === 'tests' && s.running === 'tests')) return;
+    s.running = null;
+    if (done.ok) {
+      e.testsReason = null;
+      settle('green');
+      return;
+    }
+    e.tests = 'red';
+    e.testsReason = { reason: done.reason ?? null, logPath: done.logPath ?? null };
+    if (!e.fixUsed) {
+      // The one fix attempt of this sequence (builds' T10 rule): no red rounds for helpers.
+      e.fixUsed = true;
+      openHelper('fix');
+    } else settle('red');
+    return;
+  }
+
+  if (!helper) return;
+
+  // A helper is held: its report, its checks, the idle gate, its exit (§2.3).
+  const kind = helper === 'resolve' ? 'resolved' : 'fixed';
+  const report = (facts.reports ?? []).filter((r) => r && r.kind === kind).at(-1);
+  if (report) {
+    s.pending = { kind, name: report.name };
+    actions.push({ type: 'check', kind, name: report.name });
+  } else if (facts.checks && s.pending) {
+    const claim = s.pending;
+    s.pending = null;
+    if (facts.checks.ok) {
+      s.accepted = { kind: claim.kind, name: claim.name, head: facts.head ?? null };
+      s.rejected = null;
+    } else {
+      s.accepted = null;
+      const failures = facts.checks.failures ?? [];
+      const key = `${claim.kind} ${claim.name} ${failures.join('\n')}`;
+      if (s.rejected !== key && s.live) {
+        actions.push({ type: 'send', text: rejectionText(claim, failures) });
+        s.rejected = key;
+      }
+    }
+  }
+  if (s.pending) return;
+
+  const after = () => {
+    s.accepted = null;
+    s.rejected = null;
+    if (helper === 'resolve') e.sync = { ...(e.sync ?? { baseSha: null, files: [] }), state: 'resolved' };
+    runTests();
+  };
+
+  if (s.accepted) {
+    if (s.live && facts.idle !== true) return;
+    if (s.live) actions.push({ type: 'closeWhenIdle' });
+    s.live = false;
+    after();
+    return;
+  }
+
+  if (!s.live) {
+    // Gone with no accepted report (endSyncing, endFixing): a merge still in progress is abandoned and the
+    // branch is not ready; a merge it committed counts as resolved; a fix helper's tests run anyway.
+    if (helper === 'resolve' && facts.syncPending) {
+      actions.push({ type: 'abortSync' });
+      e.sync = { ...(e.sync ?? { baseSha: null, files: [] }), state: 'unresolved' };
+      s.rejected = null;
+      settle('red');
+      return;
+    }
+    after();
+  }
+}
+
+// singleProgress(runState) → the dashboard's PROGRESS cell (§2.8, single-finisher §2.11). `runState` is
+// the snapshot's { step, phase: 'working'|'testing', outcome, rounds, end: { tests } }; `tests`
+// ('green'|'red', on `end` or, as T03 wrote it, at the top) is the settled result a `wait` reads. A red
+// round shows after the step's `tests`. A legacy `ready` (a run finished by an older pir) reads as it
+// always did.
 export function singleProgress(runState) {
   const { step, phase, outcome, rounds } = runState ?? {};
+  // The snapshot carries the settled result on `end` (single-run.mjs singleRunState).
+  const tests = runState?.tests ?? runState?.end?.tests ?? null;
   const inReview = step === 'review' || step === 'rename';
   if (outcome === 'ready') return 'build ✓ review ✓';
+  if (outcome === 'finished' || outcome === 'merged') return 'build ✓ review ✓ sync ✓ merge ✓';
+  if (outcome === 'closed') return CLOSED_CELL;
+  if (step === 'sync') return `build ✓ review ✓ sync${phase === 'testing' ? ' · tests' : ''} …`;
+  if (step === 'wait') return tests === 'red' ? 'build ✓ review ✓ sync ✗' : 'build ✓ review ✓ sync ✓ merge …';
   if (outcome === 'dropped') return inReview ? 'build ✓ review ✗' : 'build ✗';
   const n = rounds?.[inReview ? 'review' : 'build'] ?? 0;
   const tail = phase === 'testing' ? ` · tests${n > 0 ? ` (red ${n})` : ''} …` : ' …';

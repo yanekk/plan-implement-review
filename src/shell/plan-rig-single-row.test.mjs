@@ -10,10 +10,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BUILDER_MATCH, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH } from './fake/sessions.mjs';
+import { BUILDER_MATCH, FINISHER_GO_QUESTION, FINISHER_SUMMARY, SINGLE_RED_FILE, SINGLE_REVIEWER_MATCH } from './fake/sessions.mjs';
 import { indexDir, listRecords } from './index-store.mjs';
 import { startSingle, SINGLE_RIG_NAME } from './plan-rig.mjs';
-import { CTRL_S, ENTER, LEFT, RIGHT, SIZES, esc, git, ndjson, rigWithTeardown } from './plan-rig-helpers.mjs';
+import { CTRL_S, DOWN, ENTER, LEFT, RIGHT, SIZES, esc, git, ndjson, rigWithTeardown } from './plan-rig-helpers.mjs';
 
 const PROMPT = 'Fix the typo in the README\n\nand nothing else';
 const LABEL = '"Fix the typo in the REA…"';
@@ -51,6 +51,7 @@ function pace(rig, { buildMs = 0, fixMs = 0, reviewMs = 0, testSeconds = 0 } = {
 function openBoth(rig) {
   const screens = SIZES.map(([cols, rows]) => ({ size: `${cols}×${rows}`, screen: rig.openScreen({ cols, rows }) }));
   return {
+    screens,
     // Every screen shows `until`; resolves to each screen's text, in SIZES order.
     all: (until, limit = SLOW) => Promise.all(screens.map(async ({ size, screen }) => {
       try {
@@ -75,7 +76,7 @@ async function chordTwice(screen, key, armed, then, limit = SLOW) {
 
 const recordsOf = (rig) => listRecords({ dir: indexDir({ env: rig.env }) });
 
-test('end to end at 80×24 and 120×40: single-happy — the row goes building, testing, reviewing, testing, ready to merge; the steps view hands the merge over; the merge turns it merged', async (t) => {
+test('end to end at 80×24 and 120×40: single-happy — the row goes building, testing, reviewing, testing, ready for your go; the steps view shows the sync and the finisher; → on merge opens the finisher, Go there ends it finished', async (t) => {
   const rig = rigWithTeardown(t, { scripts: 'single-happy' });
   pace(rig, { buildMs: 4000, reviewMs: 4000, testSeconds: 4 });
   const both = openBoth(rig);
@@ -83,6 +84,7 @@ test('end to end at 80×24 and 120×40: single-happy — the row goes building, 
     await both.all(/No runs yet/);
     const started = startSingle(rig, PROMPT);
     assert.equal(started.started, true, JSON.stringify(started));
+    const mainBefore = git(rig.repoDir, 'rev-parse', 'main');
 
     // The row, state by state. Before the rename it is named by its label; the builder's tests run before it.
     const building = await both.all(new RegExp(`${esc(LABEL)} +single +● building +repo +build … +1`));
@@ -91,18 +93,20 @@ test('end to end at 80×24 and 120×40: single-happy — the row goes building, 
     await both.all(new RegExp(`${esc(LABEL)} +single +● testing +repo +build · tests …`));
     await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● reviewing +repo +build ✓ review … +1`));
     await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● testing +repo +build ✓ review · tests …`));
-    const ready = await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ review ✓ +·`));
-    for (const text of ready) assert.match(text, /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for you/, 'ready to merge waits on the person');
+    const ready = await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● ready for your go +repo +build ✓ review ✓ sync ✓`));
+    for (const text of ready) assert.match(text, /1 run · 0 running · 0 finished · 0 crashed · 1 waiting for you/, 'the go waits on the person');
 
-    // Open the row: both steps done, and the merge row is the hand-off.
+    // Open the row: both steps done, the sync up to date, and the finisher waiting for the go.
     both.send(ENTER);
     const steps = await both.all(/pick a step/);
     for (const text of steps) {
-      assert.match(text, new RegExp(`^${SINGLE_RIG_NAME} · ready to merge · pir/${SINGLE_RIG_NAME}$`, 'm'));
+      assert.match(text, new RegExp(`^${SINGLE_RIG_NAME} · ready for your go · pir/${SINGLE_RIG_NAME}$`, 'm'));
       assert.match(text, /^▎ ✔ build +builder +built +\d+:\d\d$/m);
       assert.match(text, /^ {2}✔ review +reviewer +reviewed +\d+:\d\d$/m);
-      assert.match(text, new RegExp(`^ {2}● merge +— +git switch main && git merge pir/${SINGLE_RIG_NAME}$`, 'm'));
-      assert.doesNotMatch(text, /Ctrl\+S/, 'a finished run offers no stop');
+      assert.match(text, /^ {2}✔ sync +— +up to date · tests green$/m);
+      assert.match(text, /^ {2}● merge +— +◆ finisher {2}waiting for your go$/m);
+      assert.doesNotMatch(text, /git switch/, 'the finisher has the merge: no hand-off line');
+      assert.match(text, /Ctrl\+S Ctrl\+S stop this run/, 'the run still runs while it waits');
     }
     // → on the build row: the builder's conversation, read only.
     both.send(RIGHT);
@@ -114,29 +118,51 @@ test('end to end at 80×24 and 120×40: single-happy — the row goes building, 
     }
     both.send(LEFT);
     await both.all(/pick a step/);
+    // → on the sync row: pir brought main in itself, so there is no session to open.
+    both.send(DOWN + DOWN);
+    await both.all(/^▎ ✔ sync/m);
+    both.send(RIGHT);
+    await both.all(/sync has no session — pir brought main in itself\./);
+    assert.equal(git(rig.repoDir, 'rev-parse', 'main'), mainBefore, 'nothing is merged before the go');
 
-    // The person's merge, by hand, in the scratch repo: within the check interval the run reads merged.
-    const mainBefore = git(rig.repoDir, 'rev-parse', 'main');
-    git(rig.repoDir, 'merge', '-q', `pir/${SINGLE_RIG_NAME}`);
-    assert.notEqual(git(rig.repoDir, 'rev-parse', 'main'), mainBefore);
-    const merged = await both.all(new RegExp(`^${SINGLE_RIG_NAME} · merged · pir/${SINGLE_RIG_NAME}$`, 'm'), 45000);
-    for (const text of merged) {
-      assert.match(text, /^ {2}✔ merge +— +merged$/m);
+    // → on the merge row: the finisher's conversation, its summary, its steps and the go question.
+    both.send(DOWN);
+    await both.all(/^▎ ● merge/m);
+    both.send(RIGHT);
+    const fin = await both.all(new RegExp(esc(FINISHER_GO_QUESTION)));
+    for (const text of fin) {
+      assert.match(text, /^finisher +agent \w+ · live/m);
+      assert.match(text, new RegExp(esc(FINISHER_SUMMARY)));
+      assert.match(text, /The steps, once you say go:/);
+      assert.match(text, /Go/);
+    }
+    // The person picks Go (the first option, selected); one screen answers, both see the run end.
+    const [first] = both.screens;
+    first.screen.send(ENTER);
+    await both.all(/Done: merged and installed\./);
+    both.send(LEFT);
+    const ended = await both.all(new RegExp(`^${SINGLE_RIG_NAME} · finished · pir/${SINGLE_RIG_NAME}$`, 'm'));
+    for (const text of ended) {
+      assert.match(text, /^ {2}✔ sync +— +up to date · tests green$/m);
+      assert.match(text, /✔ merge +— +merged$/m);
       assert.doesNotMatch(text, /git switch/);
     }
+    assert.ok(git(rig.repoDir, 'rev-list', '--count', `${mainBefore}..main`) !== '0', 'the finisher merged into main');
     both.send(LEFT);
-    const list = await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +◌ merged +repo +build ✓ review ✓`));
+    const list = await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +◌ finished +repo +build ✓ review ✓ sync ✓ merge`));
     for (const text of list) {
-      assert.match(text, /1 run · 0 running · 1 finished · 0 crashed$/m, 'a merged run is finished and no longer waits');
+      assert.match(text, /1 run · 0 running · 1 finished · 0 crashed$/m, 'a finished run no longer waits');
       assert.doesNotMatch(text, /waiting for you/);
     }
+    const record = recordsOf(rig).find((r) => r.slug === SINGLE_RIG_NAME);
+    assert.equal(record.finalState, 'finished');
     assert.deepEqual(both.overflows(), [0, 0], 'nothing wraps at either size');
   } finally {
     await both.close();
   }
 });
 
-test('end to end at 80×24 and 120×40: single-red — the steps view shows testing…, then tests red · round 1, then the build green', async (t) => {
+test('end to end at 80×24 and 120×40: single-red — the steps view shows testing…, then tests red · round 1, then the build green; a merge by hand before the go ends it merged', async (t) => {
   const rig = rigWithTeardown(t, { scripts: 'single-red' });
   pace(rig, { buildMs: 1500, fixMs: 5000, reviewMs: 500, testSeconds: 2 });
   const both = openBoth(rig);
@@ -149,7 +175,8 @@ test('end to end at 80×24 and 120×40: single-red — the steps view shows test
     for (const text of testing) {
       assert.match(text, new RegExp(`^${esc(LABEL)} · testing · pir/single-[0-9a-f]{4}$`, 'm'));
       assert.match(text, /^ {2}○ review +reviewer +waits on build$/m);
-      assert.match(text, /^ {2}○ merge +— +waits on review$/m);
+      assert.match(text, /^ {2}○ sync +— +waits on review$/m);
+      assert.match(text, /^ {2}○ merge +— +waits on sync$/m);
       assert.match(text, /Ctrl\+S Ctrl\+S stop this run/);
       assert.doesNotMatch(text, /asking you/, 'a session waiting on pir\'s tests is not asking');
     }
@@ -161,9 +188,17 @@ test('end to end at 80×24 and 120×40: single-red — the steps view shows test
     // rename's last sub-step (the index entry) is done; on a loaded machine a frame lands in between. So wait
     // for the frame that shows both, rather than asserting the name on the first `built` frame.
     await both.all(new RegExp(`^${SINGLE_RIG_NAME} · [\\s\\S]*^▎ ✔ build +builder +built +\\d+:\\d\\d$`, 'm'));
-    await both.all(new RegExp(`● merge +— +git switch main && git merge pir/${SINGLE_RIG_NAME}$`, 'm'));
+    await both.all(/● merge +— +◆ finisher {2}waiting for your go$/m);
     both.send(LEFT);
-    await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● ready to merge +repo +build ✓ review ✓`));
+    await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +● ready for your go +repo +build ✓ review ✓ sync ✓`));
+
+    // The person merges by hand instead of saying go: pir sees it and the run ends merged (§2.5 step 5).
+    git(rig.repoDir, 'merge', '-q', `pir/${SINGLE_RIG_NAME}`);
+    const list = await both.all(new RegExp(`${SINGLE_RIG_NAME} +single +◌ merged +repo +build ✓ review ✓ sync ✓ merge`), 45000);
+    for (const text of list) assert.match(text, /1 run · 0 running · 1 finished · 0 crashed$/m);
+    both.send(ENTER);
+    const merged = await both.all(new RegExp(`^${SINGLE_RIG_NAME} · merged · pir/${SINGLE_RIG_NAME}$`, 'm'));
+    for (const text of merged) assert.match(text, /✔ merge +— +merged$/m);
     assert.deepEqual(both.overflows(), [0, 0]);
   } finally {
     await both.close();

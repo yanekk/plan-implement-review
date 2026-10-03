@@ -33,6 +33,7 @@ import { join, basename, dirname } from 'node:path';
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import { getFixture, installFixture } from './fixtures.mjs';
 import { createCapture, bundleDirFor } from './capture.mjs';
@@ -1521,10 +1522,101 @@ function runTestAt({ repoDir, ref, gitRun, exec = execFileSync, env = process.en
   }
 }
 
+// --- A single run's finisher, watched (single-finisher T10) ---------------------------------------
+
+// The run's outcomes the runner counts as completed: `ready`, the ending before single-finisher, and
+// `finished`, the finisher's done. A `merged` (the person merged by hand) or `closed` is not the scenario.
+const COMPLETED_OUTCOMES = new Set(['ready', 'finished']);
+
+// The steps in which the runner moves the base: once the build has started and before the sync, so the
+// sync has something to bring in.
+const MOVE_BASE_STEPS = new Set(['build', 'rename', 'review']);
+
+// The engine checkout this file runs from (src/shell/harness → repo root): the single program the run
+// uses is this one (launch.mjs resolves it from its own file), so the person's dashboard is this one's too.
+const ENGINE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+// moveBaseNow({ repoDir, base, gitRun, move, step, now, log }) → { at, sha, step } or null: the commit of
+// `move.files` on the base in the main checkout, as somebody else's work landing during the run.
+export function moveBaseNow({ repoDir, base, gitRun, move, step, now = () => new Date(), log = () => {} }) {
+  const git = (args) => gitRun(args, { cwd: repoDir });
+  for (const [rel, content] of Object.entries(move.files)) {
+    const abs = join(repoDir, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  const add = git(['add', '--', ...Object.keys(move.files)]);
+  const commit = add.ok ? git([...HARNESS_IDENT, 'commit', '-q', '-m', move.message]) : add;
+  if (!commit.ok) {
+    log(`moving ${base} failed: ${commit.stderr}`);
+    return null;
+  }
+  const sha = git(['rev-parse', `refs/heads/${base}`]).stdout.trim();
+  log(`${base} moved to ${sha.slice(0, 8)} during ${step}: ${move.message}`);
+  return { at: now().toISOString(), sha, step };
+}
+
+// singleFinisherLook({ repoDir, base, name, moved, gitRun }) → what the scratch repo shows now: the base's
+// tip, whether it holds pir/{name} and the runner's move, the merge commits on pir/{name} not in the base
+// (the sync's `sync {base} into pir/{name}`), and whether the rules' FINISHED file is in the main checkout.
+export function singleFinisherLook({ repoDir, base, name, moved, gitRun }) {
+  const git = (args) => gitRun(args, { cwd: repoDir });
+  const baseRef = `refs/heads/${base}`;
+  const branchRef = `refs/heads/pir/${name}`;
+  const tip = git(['rev-parse', baseRef]);
+  const merges = git(['log', '--merges', '--format=%s', `${baseRef}..${branchRef}`]);
+  return {
+    baseSha: tip.ok ? tip.stdout.trim() : null,
+    branchInBase: git(['merge-base', '--is-ancestor', branchRef, baseRef]).ok,
+    movedInBase: moved?.sha ? git(['merge-base', '--is-ancestor', moved.sha, baseRef]).ok : null,
+    syncMerges: merges.ok ? merges.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [],
+    finishedFile: existsSync(join(repoDir, FINISHED_FILE)),
+  };
+}
+
+// finisherLink(controlDir) → the Remote Control link of the finisher's latest conversation, or null. The
+// held session notes it (`remote-control`, worker-proc.mjs) once Remote Control is on.
+export function finisherLink(controlDir) {
+  const dir = join(controlDir, 'conversations');
+  let files = [];
+  try {
+    files = readdirSync(dir).filter((f) => /^finisher-\d+\.ndjson$/.test(f)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    const urls = safeRead(join(dir, f))
+      .split('\n')
+      .map((l) => {
+        try {
+          const e = JSON.parse(l);
+          return e?.dir === 'note' && e.kind === 'remote-control' && e.on ? e.url ?? null : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+    if (urls.length) return urls.at(-1);
+  }
+  return null;
+}
+
+// finisherCapture({ fin, control, repoDir, base, name, gitRun, now }) → single-run.json's `finisher`: the
+// runner's record plus the look after the run, the ledger and the finisher's session id.
+function finisherCapture({ fin, control, repoDir, base, name, gitRun, now }) {
+  const afterRun = name ? { at: now().toISOString(), ...singleFinisherLook({ repoDir, base, name, moved: fin.moved, gitRun }), ledger: control ? readLedger(control) : [] } : null;
+  const sessionId = control ? readJsonOr(join(control, 'finisher', 'session.json'), null)?.sessionId ?? null : null;
+  return { moved: fin.moved, beforeGo: fin.beforeGo, afterRun, sessionId, link: fin.link, answeredTo: fin.answeredTo };
+}
+
 // runSingleScenario(opts) → { scenario, ok, reason, bundleDir, report }, the shape runScenario returns.
 // Platform pieces are injectable as in runPlanScenario; `startSingle` defaults to launch.mjs's
 // startSingleRun and `stopSingle` to control-run's stopRun. `exitWaitMs` is how long the program may take
-// to exit after it recorded its final status before what is left running is read.
+// to exit after it recorded its final status before what is left running is read. On a fixture with
+// `finisher` (single-finisher T10) the runner also moves the base once (`moveBase`) after the build started,
+// takes a look when the finisher first waits for the go, prints the dashboard command and the finisher's
+// Remote Control link for the person, and nobody answers the go: `onAwaitingGo({ control, name })` is the
+// dry pass's person, called each poll until it returns true, and is absent live.
 export async function runSingleScenario({
   fixtureId,
   scratchDir,
@@ -1541,6 +1633,8 @@ export async function runSingleScenario({
   stopSingle,
   testAt = runTestAt,
   makeAnswerer = createAnswerer,
+  onAwaitingGo = null,
+  engineDir = ENGINE_ROOT,
   timers = { setTimeout, clearTimeout },
   now = () => new Date(),
   log = () => {},
@@ -1595,6 +1689,27 @@ export async function runSingleScenario({
     return r.startTime == null || procs.startTimeOf(r.pid) === r.startTime;
   };
   const currentRecord = () => singleRecordOf(listRecords({ dir }), { repo, runId, name: state?.name ?? null });
+  // A fixture with `finisher` (single-finisher T10): the runner moves the base once, watches the finisher and
+  // records what the answerer wrote, so a fact can show the go was left to the person.
+  const fin = fixture.finisher ? { moved: null, beforeGo: null, afterRun: null, sessionId: null, link: null, answeredTo: [], goPlayed: false } : null;
+  const finTick = () => {
+    if (!fin || !control) return;
+    if (fixture.moveBase && !fin.moved && state && MOVE_BASE_STEPS.has(state.step)) {
+      fin.moved = moveBaseNow({ repoDir, base, gitRun, move: fixture.moveBase, step: state.step, now, log });
+    }
+    const phase = readJsonOr(join(control, 'finisher', 'state.json'), null)?.phase ?? null;
+    if (phase !== 'awaiting-go' || !state?.name) return;
+    if (!fin.beforeGo) {
+      fin.beforeGo = { at: now().toISOString(), phase, ...singleFinisherLook({ repoDir, base, name: state.name, moved: fin.moved, gitRun }) };
+      log(`the finisher waits for the go: ${base} ${fin.beforeGo.branchInBase ? 'HOLDS' : 'does not hold'} pir/${state.name}; FINISHED ${fin.beforeGo.finishedFile ? 'PRESENT' : 'absent'}`);
+      log(`\n=== needs the person: answer the finisher's go ===\n  PIR_HOME=${pirHome} node ${join(engineDir, 'src', 'shell', 'pir.mjs')}\n  open the single run's row, → on merge, read the steps, answer Go\n`);
+    }
+    if (!fin.link) {
+      fin.link = finisherLink(control);
+      if (fin.link) log(`  or answer it from the finisher's Remote Control link: ${fin.link}`);
+    }
+    if (onAwaitingGo && !fin.goPlayed) fin.goPlayed = !!onAwaitingGo({ control, name: state.name });
+  };
 
   try {
     log(`starting the single run: ${fixture.prompt}`);
@@ -1619,9 +1734,14 @@ export async function runSingleScenario({
         state = readJsonOr(join(control, 'state.json'), state);
         noteProcs(seen, control);
         try {
-          answerer.tick();
+          for (const d of answerer.tick() ?? []) if (fin && d?.to && !fin.answeredTo.includes(d.to)) fin.answeredTo.push(d.to);
         } catch (e) {
           log(`answerer failed: ${e.message}`);
+        }
+        try {
+          finTick();
+        } catch (e) {
+          log(`finisher watch failed: ${e.message}`);
         }
         end = planEnd({ record, alive: liveOf(record), capReached: answerer.capReached(), timedOut });
         if (end) break;
@@ -1636,7 +1756,8 @@ export async function runSingleScenario({
       } else if (end !== 'finished') {
         reason = `single-${end}`;
       } else {
-        reason = state?.outcome === 'ready' ? 'completed' : `single-${state?.outcome ?? 'no-outcome'}`;
+        // `ready` was the ending before single-finisher; `finished` is the finisher's done (T10).
+        reason = COMPLETED_OUTCOMES.has(state?.outcome) ? 'completed' : `single-${state?.outcome ?? 'no-outcome'}`;
         // The program exits on its own after its final status; give it the time to, then read what is left.
         const program = seen.get(started.pid);
         const deadline = Date.now() + exitWaitMs;
@@ -1694,6 +1815,7 @@ export async function runSingleScenario({
       seen: [...seen.values()].map(({ pid, what }) => ({ pid, what })),
       survivors,
       records,
+      ...(fin ? { finisher: finisherCapture({ fin, control, repoDir, base, name, gitRun, now }) } : {}),
     };
     writeFileSync(join(bundleDir, 'single-run.json'), `${JSON.stringify(singleRun, null, 2)}\n`);
     if (runLog) writeFileSync(join(bundleDir, 'run.log'), runLog);

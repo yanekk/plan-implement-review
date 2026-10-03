@@ -22,8 +22,11 @@ A **single run** (`@repo/single`) keeps its folder at `plans/single-{hex4}/.para
 the builder names the change, then at `plans/{name}/.parallel/single/`, moved the same way and for the
 same reason. It holds `prompt.md`, `state.json`, the planning run's `reports/`, `conversations/`
 (`build-{n}.ndjson`, `review-{n}.ndjson`), `inbox/`, `workers.json`, `status.json` and `run.log`, plus
-the logs of the commands pir runs itself (`setup.log`, `tests-{n}.log`, `baseline.log`) and
-`command.json`, the command run in flight — see [single-runs.md](single-runs.md#the-control-folder). A
+the logs of the commands pir runs itself (`setup.log`, `tests-{n}.log`, `sync-tests-{n}.log`,
+`baseline.log`), `command.json`, the command run in flight, the sync helpers' and the finisher's
+conversations (`resolve-{n}`, `fix-{n}`, `finisher-{n}.ndjson`), and `finisher/`, the build finisher's
+`state.json`, `session.json`, `status/` and `ledger.jsonl` — see
+[single-runs.md](single-runs.md#the-control-folder). A
 single run's `plans/{name}/` holds nothing but `.parallel/`; it is not a plan.
 
 The rest of this page is the build's folder.

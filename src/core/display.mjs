@@ -109,10 +109,11 @@ export const SEPARATOR_ID = '──';
 export const AGENT_ID = 'coordinator';
 export const FINISHER_ID = 'finisher';
 
-// The finisher's entry from runState.finisher (finisher-agent.mjs view()). `state` is its phase, or
+// The finisher's entry from runState.finisher (finisher-agent.mjs view()). Exported with finisherRow for a
+// single run's merge row (single-finisher DESIGN §2.11), which shows the same words and colours. `state` is its phase, or
 // `restarting` / `given-up`; `request` is a request parked for the person (its view's `asking`), named
 // apart from a task's `asking`, which says what kind of answer is wanted.
-function finisherEntry(f) {
+export function finisherEntry(f) {
   const state = f.state ?? f.phase ?? 'preparing';
   const live = state !== 'restarting' && state !== 'given-up';
   return {
@@ -146,7 +147,7 @@ const finisherAsks = (t) => finisherLabel(t).asks;
 
 // The finisher's row: amber (`finisher-asking`) while it waits on the person and counted in the asking
 // tally; `finisher-done` once done; idle while down; else the active colour.
-function finisherRow(t) {
+export function finisherRow(t) {
   const { label, asks } = finisherLabel(t);
   const kind = asks ? 'finisher-asking' : t.state === 'done' ? 'finisher-done' : t.state === 'restarting' || t.state === 'given-up' ? 'finisher-idle' : 'finisher';
   return { id: t.id, slug: 'finisher', finisher: true, kind, label, elapsedMs: null };
