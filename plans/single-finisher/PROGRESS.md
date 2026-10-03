@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-10-01 — 20 fixed, 2 decided with the user
 
-**Status:** Planned, not started.
+**Status:** Building; T01–T08 done.
 **Last updated:** 2026-10-03
-**Next `pir-work` will:** T03 single-end-flow, the first task on the critical path.
+**Next `pir-work` will:** T09 single-finisher-docs.
 
 ## Tasks
 
@@ -22,11 +22,11 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T05 | single-finisher-wiring | T01, T02, T03, T04 | ✅ | |
 | T06 | single-finisher-alerts | T05 | ✅ | |
 | T07 | single-finisher-screen | T05 | ✅ | |
-| T08 | single-finisher-drill | T06, T07 | 🔍 | Drill in 3 size files, 4 chained runs each (12 tests); fake resolve-asks, finisher-resync, finisher-exits. Deviations: scenarios chained; up-to-date happy path left to defineSingleDrill; stop/resume on an up-to-date sync (FINDINGS). Fixed: resumed finisher read only; user-decided `…` on wide step rows. |
+| T08 | single-finisher-drill | T06, T07 | ✅ | Review clean, no fix commit. Suite green; removing the `resumed` note fails the stop/resume drill, so it guards the fix. Probed fitWords edges, the stale-Go and Not-yet paths, amber checks; accepted the chained scenarios and the up-to-date stop/resume (FINDINGS, T10 to watch live). |
 | T09 | single-finisher-docs | T05, T06, T07 | ⬜ | |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T08
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
