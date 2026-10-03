@@ -64,7 +64,10 @@
       "Bash(curl -s http://127.0.0.1:*)",
       "Bash(perl -e 'alarm 300; exec @ARGV' node /tmp/pir-hand-spike/spike.mjs)",
       "Bash(npm i zod@4.6.5)",
-      "Bash(rm -rf /tmp/pir-hand-spike)"
+      "Bash(rm -rf /tmp/pir-hand-spike)",
+      "Bash(perl -e 'alarm 1800; exec @ARGV' node src/shell/harness/run.mjs sequential-testing-live --into /tmp/pir-seqtest-live)",
+      "Bash(rm -rf /tmp/pir-seqtest-live)",
+      "Bash(./install.sh)"
     ],
     "ask": [
       "Bash(npm i @earendil-works/pi-tui@0.87.1)",
