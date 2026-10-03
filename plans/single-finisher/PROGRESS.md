@@ -5,9 +5,9 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 
 **Plan reviewed:** 2026-10-01 — 20 fixed, 2 decided with the user
 
-**Status:** Planned, not started.
-**Last updated:** 2026-10-01
-**Next `pir-work` will:** T03 single-end-flow, the first task on the critical path.
+**Status:** In progress, T01–T07 and T09 done.
+**Last updated:** 2026-10-03
+**Next `pir-work` will:** T08 single-finisher-drill.
 
 ## Tasks
 
@@ -23,10 +23,10 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T06 | single-finisher-alerts | T05 | ✅ | |
 | T07 | single-finisher-screen | T05 | ✅ | |
 | T08 | single-finisher-drill | T06, T07 | ⬜ | |
-| T09 | single-finisher-docs | T05, T06, T07 | 🔍 | single-runs.md: sync, helpers, finisher, wait, base watch, reports, rows, alerts, resume, control folder, limits; finisher.md § On a single run; human-flow, control-folder, detached-runs, docs/README, README updated. single-docs.test.mjs +4 tests (11). No deviations. |
+| T09 | single-finisher-docs | T05, T06, T07 | ✅ | Reviewed: one fix, finisher.md said the single opening begins "You are the finisher"; it begins "Invoke the pir-finisher skill"; the doc test stripped that prefix, now asserts the whole line (red on old text). Probed rows, resume, watch, alerts, dashboard states and merged check against the code. |
 | T10 | single-finisher-live | T08, T09 | ⬜ | |
 
-**Review queue:** T09
+**Review queue:** *(empty)*
 
 ## Blocked on the user
 
