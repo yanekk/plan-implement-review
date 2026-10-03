@@ -7,6 +7,7 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-03 | 📌 | Tests-fix: the plan-end `npm test` failed on two load-timed rig tests (`conversation-rig-80x24` "group lines fold the steps", `plan-rig-planning-runs` "end to end at 120×40"). Both pass alone; a full rerun at load ~4 passed unchanged. No code fixed. |
 | 2026-10-03 | ✅ | Verified by hand with the user: live single-finisher-live run, main moved mid-build and synced in, the person answered Go in pir (this checkout's `pir.mjs`), the finisher merged, wrote FINISHED, the row ended `◌ finished`. All seven facts PASS. |
 | 2026-10-03 | 📌 | Remote Control is refused while `CLAUDE_CODE_USE_BEDROCK` is set (`remote-control-failed` note), so no finisher link is printed and the phone path cannot be checked on this machine. |
 | 2026-10-03 | 📌 | single-run-live's facts (`single-ready`, `base-untouched`) can no longer pass live: single runs end on the finisher's go. Its dry pass is replaced by single-finisher-live's in run-single.test.mjs; the fixture is left as the base it extends. |
