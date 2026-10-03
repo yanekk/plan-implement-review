@@ -24,7 +24,7 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | single-finisher-screen | T05 | ✅ | |
 | T08 | single-finisher-drill | T06, T07 | ✅ | |
 | T09 | single-finisher-docs | T05, T06, T07 | ✅ | |
-| T10 | single-finisher-live | T08, T09 | ⬜ | |
+| T10 | single-finisher-live | T08, T09 | ✅ | |
 
 **Review queue:** *(empty)*
 
