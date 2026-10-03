@@ -1619,6 +1619,92 @@ export function singleNoSessionLeft() {
   });
 }
 
+// --- The live check of a single run's finisher (single-finisher T10, DESIGN §2.2, §2.5, §2.7) ------------
+//
+// Each reads `bundle.singleRun.finisher` (run.mjs runSingleScenario on a fixture with `finisher`): `moved`, the
+// commit the runner made on the base once the build had started; `beforeGo`, its look the first poll the
+// finisher's state.json read `awaiting-go`; `afterRun`, its look once the run was over, with the ledger;
+// `sessionId`, the finisher's; and `answeredTo`, every session the stand-in answerer wrote to.
+
+const singleFin = (bundle) => bundle.singleRun?.finisher ?? null;
+const NO_SINGLE_FIN = { pass: false, evidence: [], detail: 'no finisher record in single-run.json (was the fixture run with `finisher`?)' };
+
+// The program recorded its own end, and it is the finisher's `finished` (§2.10).
+export function singleFinished() {
+  return fact('single-finished', 'The single run finished `finished`, on the finisher\'s done (§2.10)', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const evidence = [`outcome: ${sr.outcome ?? '(none)'}`, `final status: ${sr.finalState ?? '(none)'}`, `ended: ${sr.end ?? '(unknown)'}`];
+    if (sr.outcome !== 'finished') return { pass: false, evidence, detail: `the run ended ${sr.outcome ?? 'without an outcome'}, not finished` };
+    if (sr.finalState !== 'finished') return { pass: false, evidence, detail: `the program recorded ${sr.finalState ?? 'no final status'}, not finished` };
+    return { pass: true, evidence, detail: `finished, as ${sr.name}` };
+  });
+}
+
+// When the finisher first waited for the go: the base held the runner's post-start commit but not pir/{name},
+// pir/{name} held a `sync {base} into pir/{name}` merge commit, and FINISHED was absent (§2.2, §2.5).
+export function singleFinisherWaitedSynced() {
+  return fact('single-finisher-waited-synced', 'Before the go: the base moved, pir/{name} synced it in, nothing merged, FINISHED absent', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const fin = singleFin(bundle);
+    if (!fin) return NO_SINGLE_FIN;
+    const b = fin.beforeGo;
+    const base = sr.base ?? 'main';
+    const want = `sync ${base} into pir/${sr.name}`;
+    const evidence = [
+      fin.moved ? `${fin.moved.at}: ${base} moved to ${String(fin.moved.sha).slice(0, 8)} during ${fin.moved.step}` : `${base} was never moved by the runner`,
+      ...(b ? [`${b.at}: phase ${b.phase}, ${base} ${String(b.baseSha).slice(0, 8)} holds the move ${b.movedInBase}, holds pir/${sr.name} ${b.branchInBase}, FINISHED ${b.finishedFile}`, ...(b.syncMerges ?? []).map((m) => `merge on the branch: ${m}`)] : []),
+    ];
+    if (!fin.moved) return { pass: false, evidence, detail: `the runner never moved ${base} after the build started` };
+    if (!b) return { pass: false, evidence, detail: 'the finisher never waited for the go (its state.json never read awaiting-go)' };
+    if (b.phase !== 'awaiting-go') return { pass: false, evidence, detail: `the look was taken in phase ${b.phase}` };
+    if (b.movedInBase !== true) return { pass: false, evidence, detail: `${base} did not hold the post-start commit` };
+    if (b.branchInBase) return { pass: false, evidence, detail: `pir/${sr.name} was in ${base} before the go` };
+    if (!(b.syncMerges ?? []).includes(want)) return { pass: false, evidence, detail: `no "${want}" merge commit on the branch` };
+    if (b.finishedFile) return { pass: false, evidence, detail: 'FINISHED was written before the go' };
+    return { pass: true, evidence, detail: `${base} moved and synced in, nothing merged, FINISHED absent` };
+  });
+}
+
+// The harness's stand-in answerer wrote nothing to the finisher's session, so the go can only have come from
+// the person (DESIGN §1 Stance: the go is the person's and only the person's).
+export function singleGoLeftToPerson() {
+  return fact('single-go-left-to-person', 'The stand-in answerer never answered the finisher', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const fin = singleFin(bundle);
+    if (!fin) return NO_SINGLE_FIN;
+    const to = Array.isArray(fin.answeredTo) ? fin.answeredTo : null;
+    const evidence = [`finisher session: ${fin.sessionId ?? '(none)'}`, `answerer wrote to: ${to ? to.join(', ') || '(nobody)' : '(not recorded)'}`];
+    if (!fin.sessionId) return { pass: false, evidence, detail: 'the finisher\'s session id was not read' };
+    if (!to) return { pass: false, evidence, detail: 'what the answerer wrote was not recorded' };
+    if (to.includes(fin.sessionId)) return { pass: false, evidence, detail: 'the answerer wrote to the finisher' };
+    return { pass: true, evidence, detail: `${to.length} answer(s), none to the finisher` };
+  });
+}
+
+// After the run: pir/{name} is in the base, FINISHED is in the main checkout, and the finisher's ledger holds
+// a go by the person or the phone (§2.7).
+export function singleFinisherFinishedAfterGo() {
+  return fact('single-finisher-finished-after-go', 'After the person\'s go the finisher merged pir/{name} into the base and wrote FINISHED', (bundle) => {
+    const sr = bundle.singleRun;
+    if (!sr) return NO_SINGLE_RUN;
+    const fin = singleFin(bundle);
+    if (!fin) return NO_SINGLE_FIN;
+    const a = fin.afterRun;
+    const base = sr.base ?? 'main';
+    if (!a) return { pass: false, evidence: [], detail: 'no look after the run' };
+    const go = goLine(a.ledger);
+    const evidence = [`${a.at}: ${base} ${String(a.baseSha).slice(0, 8)} holds pir/${sr.name} ${a.branchInBase}, FINISHED ${a.finishedFile}`, ...(go ? [`ledger ${go.t}: go by ${go.by}, ${go.from} → ${go.to}`] : [])];
+    if (!go) return { pass: false, evidence, detail: 'the finisher\'s ledger has no go line' };
+    if (go.by !== 'person' && go.by !== 'phone') return { pass: false, evidence, detail: `the go came by ${go.by}, not the person or the phone` };
+    if (!a.branchInBase) return { pass: false, evidence, detail: `pir/${sr.name} is not in ${base}` };
+    if (!a.finishedFile) return { pass: false, evidence, detail: 'FINISHED is not in the main checkout' };
+    return { pass: true, evidence, detail: `go by ${go.by}, pir/${sr.name} in ${base}, FINISHED present` };
+  });
+}
+
 // --- Running a scenario's facts and rendering the verdict ----------------------------------------
 
 // checkScenario(spec, bundle) → { scenario, pass, facts:[{ id, label, pass, evidence, detail }] }. Runs

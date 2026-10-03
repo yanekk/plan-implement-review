@@ -156,9 +156,9 @@ const EXPECT = {
 // --- The registry ---------------------------------------------------------------------------------
 
 // The fixtures that seed no plan (pir-plan-command T17; dev-base, base-branch T09): a planning run writes
-// it. Checked on their own, not by the loops. single-run-live (single-runs T12) seeds no plan either: a
-// single run has none.
-const PLANLESS = ['plan-command', 'dev-base', 'single-run-live'];
+// it. Checked on their own, not by the loops. single-run-live (single-runs T12) and
+// single-finisher-live (single-finisher T10) seed no plan either: a single run has none.
+const PLANLESS = ['plan-command', 'dev-base', 'single-run-live', 'single-finisher-live'];
 
 test('listFixtures returns exactly the DESIGN §4.1 fixtures, and the planless ones', () => {
   assert.deepEqual(new Set(listFixtures()), new Set([...Object.keys(EXPECT), ...PLANLESS]));
@@ -842,6 +842,41 @@ test('single-run-live installs a clean repo whose settings name node --test, and
     writeFileSync(join(dir, 'add.mjs'), readFileSync(join(dir, 'add.mjs'), 'utf8').replace('let i = 1', 'let i = 0'));
     const green = spawnSync('node', ['--test'], { cwd: dir, env, encoding: 'utf8' });
     assert.equal(green.status, 0, green.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- single-finisher-live: a single run the finisher ends (single-finisher T10) -------------------
+
+test('single-finisher-live: built on single-run-live, with finishing rules, a base move, the 25-minute clock and the T10 facts', () => {
+  const fx = getFixture('single-finisher-live');
+  const base = getFixture('single-run-live');
+  const s = fx.scenario;
+  assert.equal(s.kind, 'single');
+  assert.equal(fx.prompt, base.prompt);
+  assert.equal(s.reply, base.scenario.reply);
+  assert.deepEqual(fx.settings, base.settings);
+  assert.equal(fx.finisher, true);
+  assert.ok(Object.keys(fx.moveBase.files).length > 0 && !Object.keys(fx.moveBase.files).some((p) => p in base.files), 'the base move touches no file of the change');
+  // Inside the 1500 s alarm the live command runs under.
+  assert.ok(s.seatbelts.timeoutMs < 1500_000, `timeoutMs ${s.seatbelts.timeoutMs}`);
+  assert.deepEqual(
+    s.facts.map((f) => f.id),
+    ['single-finished', 'single-builder-commit-green', 'single-finisher-waited-synced', 'single-go-left-to-person', 'single-finisher-finished-after-go', 'single-index-under-name', 'single-no-session-left'],
+  );
+  const files = fixtureFiles(fx);
+  assert.match(files['.pir/rules/on-finish.md'], /merge[\s\S]*FINISHED/);
+  for (const [rel, content] of Object.entries(base.files)) assert.equal(files[rel], content, `${rel} is single-run-live's`);
+});
+
+test('single-finisher-live installs a clean repo with its finishing rules committed', () => {
+  const dir = tmp('pir-fix-single-fin-');
+  try {
+    installFixture('single-finisher-live', { into: dir });
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '', 'the seeded tree is clean');
+    assert.match(git(dir, ['show', 'main:.pir/rules/on-finish.md']), /FINISHED/);
+    assert.ok(existsSync(join(dir, '.claude/skills/pir-finisher/SKILL.md')), 'the pir-finisher skill is carried');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

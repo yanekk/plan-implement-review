@@ -6,8 +6,8 @@ lives in [FINDINGS.md](FINDINGS.md). Sixty words to a Notes cell, counted.
 **Plan reviewed:** 2026-10-01 — 20 fixed, 2 decided with the user
 
 **Status:** Planned, not started.
-**Last updated:** 2026-10-01
-**Next `pir-work` will:** T03 single-end-flow, the first task on the critical path.
+**Last updated:** 2026-10-03
+**Next `pir-work` will:** review T10 single-finisher-live.
 
 ## Tasks
 
@@ -24,9 +24,9 @@ Legend: ⬜ not started · 🟡 in progress · 🔍 implemented, awaiting review
 | T07 | single-finisher-screen | T05 | ✅ | |
 | T08 | single-finisher-drill | T06, T07 | ✅ | |
 | T09 | single-finisher-docs | T05, T06, T07 | ✅ | |
-| T10 | single-finisher-live | T08, T09 | ⬜ | |
+| T10 | single-finisher-live | T08, T09 | 🔍 | Fixture, runner, 4 facts, dry pass; live run PASS, Go by person in pir. Deviations: dry pass replaces the skipped single-run-live one; no `./install.sh`, the person ran this checkout's `pir.mjs` (installed skills identical, live build engine untouched); no phone link on Bedrock. |
 
-**Review queue:** *(empty)*
+**Review queue:** T10
 
 ## Blocked on the user
 
