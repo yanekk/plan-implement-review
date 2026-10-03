@@ -3031,6 +3031,11 @@ test('the steps view of a single run: ready shows the hand-off on the merge row,
   const long = singleRow({ name: 'fix-the-typo-in-the-readme-and-the-changelog', state: 'finished', over: { outcome: 'ready' } });
   const narrow = frameText(buildWatchFrame(long, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 80 }));
   assert.match(narrow.replace(/\n/g, ' '), /Hand-off: git switch main && git merge pir\/fix-the-typo-in-the-readme-and-the-changelog/);
+  // The merge row itself ends at a word with `…`, never cut mid-word by the frame (user 2026-10-03, T08).
+  assert.match(narrow, /^ {2}● merge +— +git switch main && git merge…$/m);
+  const at60 = frameText(buildWatchFrame(singleRow({ name: 'rig-fix', state: 'finished', over: { outcome: 'ready' } }), { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 60 }));
+  assert.match(at60, /^ {2}● merge +— +git switch main && git merge…$/m);
+  assert.match(at60, /^Hand-off: git switch main && git merge pir\/rig-fix$/m);
   assert.doesNotMatch(frameText(buildWatchFrame(long, { now: NOW, ui: { ...initialUi(), view: 'watch' }, columns: 120 })), /Hand-off:/);
 
   const merged = stepsOf({ ...ready, merged: true });

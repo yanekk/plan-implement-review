@@ -201,6 +201,10 @@ export function startFinisher({
     up = true;
     const w = worker;
     w.onExit((info) => onExit(w, info));
+    // A resumed finisher appends to the log it exited in, so the log says it is back, as a held session's
+    // does (held-session.mjs): without it the conversation view reads the old `exited` note as the end and
+    // opens the live finisher read only, its go question unanswerable (single-finisher T08 drill).
+    if (resume) w.note('resumed', { sessionId: session.sessionId });
     if (resume) {
       const r = pendingResume ?? { phase: state.phase, stuckSummary: null };
       pendingResume = null;

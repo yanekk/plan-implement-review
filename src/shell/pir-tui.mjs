@@ -638,6 +638,17 @@ const STEP_TEXT_AT = 2 + 2 + 9 + 13;
 // The text column's width where the frame has room for it.
 const STEP_TEXT_WIDTH = 30;
 
+// fitWords(text, width) → text, or, when it is wider than `width`, its words that fit and `…`: a single
+// run's hand-merge line on a 60-column frame was cut mid-word by the terminal (`… git merge pir/r`), and the
+// person chose an ellipsis at a word (single-finisher T08, 2026-10-03). The whole line is on the Hand-off note.
+function fitWords(text, width) {
+  const chars = [...text];
+  if (width < 1 || chars.length <= width) return text;
+  const head = chars.slice(0, width - 1).join('');
+  const cut = head.lastIndexOf(' ');
+  return `${(cut > 0 ? head.slice(0, cut) : head).replace(/\s+$/, '')}…`;
+}
+
 // One step row of a planning or single run's steps view, tagged with its index for the mouse. On a frame
 // narrower than the full row the text column gives way, down to the text itself, so the clock is drawn
 // whole: the terminal cut `0:17` to `0:1` at 60 columns, which reads as another time (single-runs T11 drill).
@@ -645,8 +656,10 @@ function stepLine(r, i, { sel, alive, spinnerChar, cols = DEFAULT_COLS }) {
   const glyph = r.kind === 'active' ? (alive ? spinnerChar : '·') : STEP_GLYPH[r.kind];
   const clock = fmtClock(r.clock);
   const room = cols - STEP_TEXT_AT - 1 - [...clock].length;
-  const width = Math.max([...r.text].length, Math.min(STEP_TEXT_WIDTH, room));
-  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${r.text.padEnd(width)} ${clock}`.replace(/\s+$/, '');
+  // Only a row with no clock is shortened: a clocked row too narrow for its text keeps it whole (below).
+  const body = clock ? r.text : fitWords(r.text, cols - STEP_TEXT_AT);
+  const width = Math.max([...body].length, Math.min(STEP_TEXT_WIDTH, room));
+  const text = `${glyph} ${r.id.padEnd(8)} ${r.role.padEnd(12)} ${body.padEnd(width)} ${clock}`.replace(/\s+$/, '');
   return withHit([span(i === sel ? '▎ ' : '  ', i === sel ? 'selected' : null), span(text, STEP_STYLE[r.kind] ?? null)], 'step', i);
 }
 
