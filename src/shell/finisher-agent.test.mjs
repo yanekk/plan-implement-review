@@ -14,6 +14,7 @@ import { startWorker as realStartWorker } from './worker-proc.mjs';
 import { startFinisher, FINISHER_TOOLS, FINISHER_HOOKS, ASK_EVERY_CALL } from './finisher-agent.mjs';
 import { fakeClaudeSpawner, toolUse, toolResult, canUseTool } from './fake/claude-stream.mjs';
 import { RESTARTED_MID_FINISH } from '../core/finisher-policy.mjs';
+import { hasEnded } from './conversation-view.mjs';
 
 const CLAUDE = '/nonexistent/claude';
 
@@ -420,6 +421,10 @@ test('exit in finishing → resumed with its session id, phase stuck, the resume
   const r = fin.ledger().find((l) => l.kind === 'restart');
   assert.deepEqual([r.from, r.to], ['finishing', 'stuck']);
   assert.equal(fin.logPath, join(s.controlDir, 'conversations', 'finisher-1.ndjson'), 'the same conversation, appended');
+  // The log says the finisher is back, so the conversation view does not read the old exit as its end.
+  const entries = readFileSync(fin.logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(entries.some((e) => e.dir === 'note' && e.kind === 'exited'), 'the first process exited');
+  assert.equal(hasEnded(entries), false, 'a resumed finisher is not ended');
 });
 
 test('four exits within an hour → given up; a pir restart within the hour keeps it given up', async (t) => {

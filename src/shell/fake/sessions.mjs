@@ -225,17 +225,38 @@ export const SINGLE_FIX_MATCH = 'Load the pir-single skill and run it as the fix
 // The single opening's first line (finisher-brief finisherOpening, T02).
 export const SINGLE_FINISHER_MATCH = 'You are the finisher of the single run';
 
-// singleResolveScript({ name }) → steps: finishes the merge in progress by keeping both sides of every
-// clash (the marker lines dropped), commits the merge and reports `resolved`.
-export function singleResolveScript({ name }) {
+// singleResolveScript({ name, question }) → steps: finishes the merge in progress by keeping both sides of every
+// clash (the marker lines dropped), commits the merge and reports `resolved`. With `question` it first asks
+// the person that one AskUserQuestion (options SINGLE_RESOLVE_OPTIONS) and waits for the answer.
+export const SINGLE_RESOLVE_OPTIONS = ['Keep both', 'Keep main'];
+export function singleResolveScript({ name, question = null }) {
+  const ask = question
+    ? [
+        { emit: toolUse('toolu_resolve-ask-1', 'AskUserQuestion', { questions: [resolveQuestion(question)] }) },
+        { emit: canUseTool('resolve-ask-1', 'AskUserQuestion', { questions: [resolveQuestion(question)] }, { requires_user_interaction: true }) },
+        { await: 'control_response' },
+        { resultFor: 'resolve-ask-1' },
+      ]
+    : [];
   return [
     ...nextTurn(),
     { emit: assistantText(`Resolving the clash on pir/${name}.`) },
+    ...ask,
     { sh: run('resolve-both') },
     singleReport('resolved', name, 'The merge is committed, both sides kept.'),
     ...say('Resolved and committed.'),
   ];
 }
+
+const resolveQuestion = (question) => ({
+  question,
+  header: 'Clash',
+  multiSelect: false,
+  options: [
+    { label: SINGLE_RESOLVE_OPTIONS[0], description: 'both sides\' lines, in order' },
+    { label: SINGLE_RESOLVE_OPTIONS[1], description: 'drop the change\'s side' },
+  ],
+});
 
 // singleFixScript({ name, fix }) → steps: runs the `sh` line `fix`, commits what it changed and reports
 // `fixed`.
@@ -252,8 +273,9 @@ export function singleFixScript({ name, fix }) {
 // singleFinisherScript({ name, statusDir, repoRoot, finishingMs }) → the shared fake finisher on pir/{name}:
 // a `ready` status, the `Go` question, and on the go the merge into the main checkout for real, then `done`.
 // `statusDir` is the finisher's status folder under the run's renamed control folder.
-export function singleFinisherScript({ name, statusDir, repoRoot, finishingMs = 100 }) {
-  return finisherScript({ statusDir, repoRoot, branch: `pir/${name}`, finishingMs, merge: true });
+// `variant` is finisherScript's (`finisher-notyet`, `finisher-resync`, `finisher-exits`, …).
+export function singleFinisherScript({ name, statusDir, repoRoot, finishingMs = 100, variant = 'finisher' }) {
+  return finisherScript({ statusDir, repoRoot, branch: `pir/${name}`, finishingMs, merge: true, variant });
 }
 
 // ---- The coordinator drill (pir-coordinator T07). ----
@@ -543,6 +565,9 @@ export const FINISHER_GO_QUESTION = 'Ready to finish? 2 steps from project rules
 export const FINISHER_SUMMARY = 'The branch is clean and its tests pass; main has not moved.';
 export const FINISHER_RETRY_QUESTION = 'Retry the install? 1 step from project rules';
 export const FINISHER_RESERVED_COMMAND = 'rm -rf dist/';
+export const FINISHER_RECHECKED = 'Re-checked after main moved: the branch is clean and its tests pass.';
+export const FINISHER_NOT_YET = 'Not yet, then. Nothing has changed; tell me when you want me to ask again.';
+export const FINISHER_ASKING_AGAIN = 'Asking again.';
 export const finisherStuckSummary = (branch) => `Merged ${branch} into main; ./install.sh failed: npm ci exited 1 (network unreachable). Nothing else ran.`;
 export const finisherDoneSummary = (branch) => `Merged ${branch} into main and ran ./install.sh.`;
 export function finisherScript({ statusDir, repoRoot, branch, init = initEvent(), finishingMs = 3000, variant = 'finisher', merge: mergeForReal = false }) {
@@ -586,15 +611,49 @@ export function finisherScript({ statusDir, repoRoot, branch, init = initEvent()
     // A `Not yet` is not a go (DESIGN §2.7): the finisher ends its turn and waits for the person to write.
     return [
       ...opening,
-      ...say("Not yet, then. Nothing has changed; tell me when you want me to ask again."),
+      ...say(FINISHER_NOT_YET),
       { emit: resultEvent('success', 'waiting') },
       { await: 'user' },
       { emit: init },
-      ...say('Asking again.'),
+      ...say(FINISHER_ASKING_AGAIN),
       goQuestion('go2', FINISHER_GO_QUESTION, 2),
       ...merge,
       ...done,
     ];
+  }
+  if (variant === 'finisher-resync') {
+    // The base moves before the go (single-finisher DESIGN §2.5): the person's Go to the first question
+    // lands after pir held the finisher, so it does not count. pir then tells the finisher twice, in either
+    // order (the stale Go, and the re-sync), and only after both does it write a fresh `ready` and ask
+    // again. That second question is answered `Not yet`, the person writes, and a third question takes
+    // the go that finishes.
+    return [
+      ...opening,
+      ...say('Go noted; checking it counts.'),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: init },
+      ...say('Noted.'),
+      { emit: resultEvent('success', 'noted') },
+      { await: 'user' },
+      { emit: init },
+      ...say(FINISHER_RECHECKED),
+      writeStatus('2-ready.json', { kind: 'ready', rules: join(repoRoot, '.pir', 'rules', 'on-finish.md'), summary: FINISHER_RECHECKED, steps }),
+      goQuestion('go2', FINISHER_GO_QUESTION, 2),
+      ...say(FINISHER_NOT_YET),
+      { emit: resultEvent('success', 'waiting') },
+      { await: 'user' },
+      { emit: init },
+      ...say(FINISHER_ASKING_AGAIN),
+      goQuestion('go3', FINISHER_GO_QUESTION, 2),
+      ...merge,
+      ...done,
+    ];
+  }
+  if (variant === 'finisher-exits') {
+    // A finisher that dies on every start, its resumes included (each resume continues past the exit before
+    // it), so the restart budget runs out and pir falls back to the hand merge (finisher DESIGN §2.12).
+    return [{ await: 'user' }, { emit: init }, ...say("I'm the pretend finisher, and I am about to fall over."), ...Array.from({ length: 8 }, () => ({ exit: 1 }))];
   }
   if (variant === 'finisher-stuck') {
     // A step fails after the go (DESIGN §2.12): stuck with a proposal, the go question again, and only the
