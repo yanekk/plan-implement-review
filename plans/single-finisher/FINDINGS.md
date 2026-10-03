@@ -7,6 +7,9 @@ Legend: 🐞 defect found · ✅ verified by hand with the user · 📌 worth kn
 
 | Date | | Finding |
 |---|---|---|
+| 2026-10-03 | ✅ | Verified by hand with the user: live single-finisher-live run, main moved mid-build and synced in, the person answered Go in pir (this checkout's `pir.mjs`), the finisher merged, wrote FINISHED, the row ended `◌ finished`. All seven facts PASS. |
+| 2026-10-03 | 📌 | Remote Control is refused while `CLAUDE_CODE_USE_BEDROCK` is set (`remote-control-failed` note), so no finisher link is printed and the phone path cannot be checked on this machine. |
+| 2026-10-03 | 📌 | single-run-live's facts (`single-ready`, `base-untouched`) can no longer pass live: single runs end on the finisher's go. Its dry pass is replaced by single-finisher-live's in run-single.test.mjs; the fixture is left as the base it extends. |
 | 2026-10-03 | 🐞 | A resumed finisher appended to its log with no `resumed` note, so the conversation view opened it read only and its go was unanswerable after Ctrl+R. Fixed in `finisher-agent.mjs` `launch()`; builds shared it. Test in `finisher-agent.test.mjs`. |
 | 2026-10-03 | 🔄 | User decided a clockless step row too wide for the frame ends at a word with `…` (the fallback merge row at 60 columns read `git merge pir/r`). `fitWords` in `pir-tui.mjs`; the Hand-off note keeps the whole command. |
 | 2026-10-03 | 📌 | While a re-sync runs before the go, the finisher's old go question stays open, so the merge row reads `◆ finisher  asking you` in amber; the person's answer to it does not count. Same in builds. |
