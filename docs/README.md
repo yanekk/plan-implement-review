@@ -123,8 +123,9 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - **The single program** (`src/shell/single-run.mjs`) — the detached program behind `@repo/single` in
   the dashboard box. It runs the repo's setup lines, holds a builder and then a fresh reviewer through
   the planning program's session holder (`src/shell/held-session.mjs`), runs the repo's tests itself
-  after each, checks each report against git, renames the run to the builder's name, and records the
-  outcome. The pure step machine is `src/core/singleflow.mjs`; the sessions follow the `pir-single`
+  after each, checks each report against git, renames the run to the builder's name, brings the base in
+  (with a resolve or fix helper when it clashes or turns red), hands the branch to the build's finisher,
+  watches the base while it waits, and records the outcome. The pure step machine is `src/core/singleflow.mjs`; the sessions follow the `pir-single`
   skill (see [single-runs.md](single-runs.md)).
 - **The API service** (`src/shell/api-service.mjs`) — a small HTTP server on `127.0.0.1:47717` that
   launchd starts at login and keeps alive, outside any run. It answers `GET /v1/usage` (how much of the
@@ -150,12 +151,13 @@ and it had no conversation view. `install.sh` removes an installed copy it finds
 - [coordinator-agent.md](coordinator-agent.md) — the coordinator agent: answer first, what is reserved
   for the person, passing on, its conversation, the ledger, the end-of-run base sync and its hold, `REPORT.md` and
   `ready to merge`, `--no-coordinator`.
-- [finisher.md](finisher.md) — the finisher: when it takes over, the rules file, its phases, the fence,
+- [finisher.md](finisher.md) — the finisher: when it takes over (a build or a single run), the rules file, its phases, the fence,
   the go, status files, the end of the run, failure, phone alerts, its row, storage.
 - [planning-runs.md](planning-runs.md) — `pir plan`: the planner and the plan reviewer run inside `pir`,
   the rename, the go that starts the build, resume.
 - [single-runs.md](single-runs.md) — `@repo/single`: one small change without a plan, the `setup` and
-  `test` settings, the builder and the fresh reviewer, red rounds and the baseline, the row and its
-  steps view, alerts, stop, remove and resume, known limitations.
+  `test` settings, the builder and the fresh reviewer, red rounds and the baseline, the sync and its
+  helpers, the finisher and the base watch, the row and its steps view, alerts, stop, remove and resume,
+  known limitations.
 - [api-service.md](api-service.md) — the local API service: the contract (`api.json`, `GET /v1/usage`,
   `GET /health`), the port, where a reading comes from, the login item, `pir service`, scratch homes.

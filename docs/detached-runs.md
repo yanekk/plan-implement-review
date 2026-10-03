@@ -134,9 +134,10 @@ The snapshot is gitignored with the rest of the control folder (below).
 
 `pir` paints a full-screen list, one row per run: slug, TYPE (`plan`, `work`, or `single`), state, repo,
 progress (done/total from the snapshot), and live-worker count. A single run's row reads `building`,
-`testing`, `reviewing`, `asking you`, `ready to merge`, `merged` or `finished`, and its progress
-`build ✓ review …` and the like ([single-runs.md](single-runs.md#on-the-screen)); its `ready to merge`
-and `asking you` count in `waiting for you`. A planning row's state, progress and slug read
+`testing`, `reviewing`, `syncing`, `ready for your go`, `finishing`, `asking you`, `ready to merge`,
+`not ready`, `merged`, `closed` or `finished`, and its progress `build ✓ review ✓ sync …` and the like
+([single-runs.md](single-runs.md#on-the-screen)); its `ready for your go`, `ready to merge` and `asking
+you` count in `waiting for you`. A planning row's state, progress and slug read
 differently — `planning`, `reviewing`, `your go`; `plan ✓ review …`; the brief's label in quotes before
 the plan has a name — and a `your go` row adds `· N waiting for you` to the counts line (see
 [planning-runs.md](planning-runs.md)). A running build with any task waiting on the person — a question
@@ -200,8 +201,9 @@ its `run.log` tail and the log's full path instead, so a run that failed to star
 Opening a planning run shows its **steps view** instead — one row each for `plan`, `review` and `build`
 — and, when the plan is reviewed and waiting, the go question that starts the build (see
 [planning-runs.md](planning-runs.md)). Opening a single run shows its own steps view, one row each for
-`build`, `review` and `merge`, the last carrying `git switch {base} && git merge pir/{name}` once the run
-is ready (see [single-runs.md](single-runs.md#on-the-screen)).
+`build`, `review`, `sync` and `merge`, the last carrying the finisher's state while it is on, or
+`git switch {base} && git merge pir/{name}` when the merge is the person's (see
+[single-runs.md](single-runs.md#on-the-screen)).
 
 ### The conversation view
 
@@ -508,7 +510,7 @@ still alive with its recorded start time is sent SIGTERM, then SIGKILL after 3 s
 burning tokens. The grace period is what separates a stop from a crash — never force-kill a run
 without it. A planning run stops the same way: its program closes its session and records `stopped`,
 with the same grace, force-kill and reap; so does a single run, which also kills the setup, test or
-baseline run it has in flight.
+baseline run it has in flight and closes its finisher.
 
 ## Remove
 
@@ -531,7 +533,7 @@ the same selection carries it out; any other key cancels the arm. Both are irrev
 ([restart-recovery.md](restart-recovery.md)). On a planning run — also offered on a finished one whose
 review ended not reviewed — it reopens the same planner or reviewer conversation
 ([planning-runs.md](planning-runs.md)). On a stopped or crashed single run it reopens the builder's or
-reviewer's conversation, or restarts the setup, test or baseline run it was stopped in; a finished single run is not
+reviewer's conversation, a sync helper's, or the finisher, or restarts the setup, test or baseline run it was stopped in; a finished single run is not
 resumable ([single-runs.md](single-runs.md#stop-remove-resume)). A refusal (the run came back to life meanwhile, or `startRun`
 refused the plan) is shown under the list (`resumeRun` in `launch.mjs`).
 
