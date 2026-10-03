@@ -362,6 +362,14 @@ was not there. Every task needs all five of:
 Sizing: **if you cannot write its "Done when" in three lines, it is two tasks.** If it has
 no test list, it is either not a task or the testability boundary is in the wrong place.
 
+**A "Done when" holds only what can be done on the task's own branch.** In a parallel build a
+task ends on an unmerged, unreviewed branch, so a step that only makes sense after the merge,
+such as refreshing an installed copy of the project's own tool or making the merged code live,
+is not a task's to take. Installing from a task branch puts that branch under every live session
+that uses the installed copy. If the project has finishing rules (`.pir/rules/on-finish.md`),
+the step belongs there. If it has none, name the gap to the person. Never add the step to a
+task's "Done when" or to a live-action row that a worker would run during the build.
+
 ### Every step of the main path has a builder and a wirer
 
 A plan split by component builds every part and can still ship nothing, because connecting the
